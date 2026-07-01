@@ -29,6 +29,7 @@
 #include <linux/printk.h>
 #include <linux/rwsem.h>
 #include <linux/string.h>
+#include <linux/suspend.h>
 #include <linux/sysfs.h>
 #include <linux/types.h>
 #include <linux/wmi.h>
@@ -146,6 +147,10 @@ struct msi_wmi_platform_data {
 	struct device *fw_attrs_dev;
 	struct kset *fw_attrs_kset;
 	enum platform_profile_option cur_profile;	/* last-set profile, re-applied on resume */
+	/* Fan state snapshotted at suspend, re-applied after firmware (S3/hibernate) resume. */
+	u8 fan_table_cpu[32];
+	u8 fan_table_gpu[32];
+	bool fan_tables_enabled;
 };
 
 enum msi_fw_attr_id {
@@ -1596,22 +1601,69 @@ static void msi_wmi_platform_remove(struct wmi_device *wdev)
 }
 
 /*
- * The EC resets shift mode (platform_profile) to its default across suspend/resume
- * (verified on MS-16V5: 0xD2 performance->balanced; the firmware _WAK does not
- * restore it). Re-apply the last-selected profile on resume.
+ * Snapshot the fan state before suspend. On a firmware-based resume (deep S3 or
+ * hibernate) the EC resets shift-mode (platform_profile), the fan mode and the
+ * fan curve tables to their defaults; s2idle keeps them. Cache what to restore.
+ */
+static int msi_wmi_platform_suspend(struct device *dev)
+{
+	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+	u8 buffer[32] = { MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE };
+
+	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)))
+		data->fan_tables_enabled = buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] &
+					   MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
+
+	data->fan_table_cpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
+	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_cpu,
+			       sizeof(data->fan_table_cpu));
+	data->fan_table_gpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
+	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_gpu,
+			       sizeof(data->fan_table_gpu));
+
+	return 0;
+}
+
+/*
+ * Firmware resume (deep S3 / hibernate) resets the EC's live control state, so
+ * re-apply platform_profile and, if the user was driving the fans manually, the
+ * fan curve tables and the manual-mode flag. s2idle keeps everything -> skip.
+ * (Verified on MS-16V5: deep S3 resets 0xD2, 0xD4 and the 0x71.. / 0x82.. curve
+ * tables; s2idle resets nothing.)
  */
 static int msi_wmi_platform_resume(struct device *dev)
 {
 	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+	u8 buffer[32];
 
-	if (!data->quirks->shift_mode)
+	if (!pm_resume_via_firmware())
 		return 0;
 
-	return msi_wmi_platform_profile_apply(data, data->cur_profile);
+	if (data->quirks->shift_mode)
+		msi_wmi_platform_profile_apply(data, data->cur_profile);
+
+	if (data->fan_tables_enabled) {
+		memcpy(buffer, data->fan_table_cpu, sizeof(buffer));
+		buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
+		msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
+
+		memcpy(buffer, data->fan_table_gpu, sizeof(buffer));
+		buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
+		msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
+
+		buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
+		if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer))) {
+			buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
+			buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] |= MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
+			msi_wmi_platform_query(data, MSI_PLATFORM_SET_AP, buffer, sizeof(buffer));
+		}
+	}
+
+	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(msi_wmi_platform_pm_ops, NULL,
-				msi_wmi_platform_resume);
+static DEFINE_SIMPLE_DEV_PM_OPS(msi_wmi_platform_pm_ops,
+				msi_wmi_platform_suspend, msi_wmi_platform_resume);
 
 static const struct wmi_device_id msi_wmi_platform_id_table[] = {
 	{ MSI_PLATFORM_GUID, NULL },

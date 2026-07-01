@@ -4,8 +4,10 @@ DKMS build of the mainline `msi-wmi-platform` driver with the in-review
 fan-curve / platform_profile / charge series applied, **plus MS-16V5 additions**:
 
 - **MS-16V5 board quirk** (Stealth GS66 12UHS and siblings).
-- **`platform_profile` re-apply on resume** — the EC drops shift-mode across suspend and the
-  firmware doesn't restore it, so the selected profile would otherwise be lost.
+- **State restore on firmware resume** — deep S3 / hibernate reset the EC's shift-mode, fan mode
+  and fan curve tables (s2idle keeps them). The driver snapshots fan state on suspend and, gated
+  on `pm_resume_via_firmware()`, re-applies `platform_profile` + fan curve/mode on resume (no-op
+  on s2idle). No userspace resume hook needed.
 - **EC-firmware-ID matching** — one `16V5` entry covers all `16V5EMS1.*` SKUs (no per-DMI list).
 
 ## Install (recommended: the repo installer)

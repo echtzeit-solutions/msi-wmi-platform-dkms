@@ -9,14 +9,15 @@ lm-sensors `fancontrol`, which continuously rewrites `pwm` and would fight this 
 - `msi-fan-curve`      — apply script (reads the conf, writes the hwmon curve, sets manual mode).
 - `msi-fan-curve.conf` — the curve (6 temp/speed points per fan). Ported from msi-ec `curve_apply`.
 - `msi-fan-curve.service` — applies on boot.
-- `50-msi-fan-curve`   — systemd-sleep hook, re-applies on resume. **Only needed on deep S3.**
 
-## Resume: s2idle vs deep S3
-Verified by full-EC diff across a suspend cycle: on **s2idle** the EC **keeps** the manual fan
-mode (`0xD4=0x8D`) and the curve — so **no resume re-apply is needed** (the boot service is
-enough). On **deep S3** the EC resets the manual mode (this is why the old msi-ec setup used
-`cscurve_suspend`), so install the `50-msi-fan-curve` sleep hook only if you use deep S3.
-(There is a brief fan spin-up on wake that settles back to the curve on its own.)
+## Resume: handled by the driver
+No sleep hook is needed. Verified by full-EC diff: **s2idle keeps** the manual fan mode and the
+curve, and **deep S3 / hibernate reset** them — but the `msi-wmi-platform` driver (this repo,
+0.4+) snapshots the fan state on suspend and re-applies it on firmware resume
+(`pm_resume_via_firmware()`), so the curve and manual mode survive every sleep mode
+automatically. (A brief fan spin-up on wake settles back to the curve on its own.)
+On the stock in-tree driver (no resume handler) you'd need a system-sleep hook for deep S3;
+with this DKMS driver you don't.
 
 ## old (msi-ec / isw) -> new mapping
 Both `msi-ec` and `isw` describe the same EC fan table as 7 speeds + 6 temperatures. The driver
@@ -41,9 +42,7 @@ sudo install -m644 msi-fan-curve.conf       /etc/msi-fan-curve.conf
 sudo install -m644 msi-fan-curve.service    /etc/systemd/system/msi-fan-curve.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now msi-fan-curve.service
-
-# Only if you use deep S3 (not s2idle) — re-apply the curve on resume:
-# sudo install -m755 50-msi-fan-curve       /usr/lib/systemd/system-sleep/50-msi-fan-curve
+# (no resume hook needed — the driver re-applies the curve after deep S3/hibernate)
 
 # and retire the old isw units:
 sudo systemctl disable isw@16V5EMS1.service 2>/dev/null || true

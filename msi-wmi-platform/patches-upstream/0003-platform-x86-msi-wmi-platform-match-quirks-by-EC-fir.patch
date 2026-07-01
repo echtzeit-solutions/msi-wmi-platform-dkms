@@ -1,4 +1,4 @@
-From cf0a578de7f597d6f444fea8053da1b44e98e49b Mon Sep 17 00:00:00 2001
+From 522212d7ea69500493d1ed640c562c7372d65a7b Mon Sep 17 00:00:00 2001
 From: dev <dev@local>
 Date: Wed, 1 Jul 2026 16:12:44 +0200
 Subject: [PATCH 3/3] platform/x86: msi-wmi-platform: match quirks by EC
@@ -18,10 +18,10 @@ Assisted-by: Claude:claude-opus-4-8
  1 file changed, 51 insertions(+)
 
 diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
-index 6d361f7..c79d4a6 100644
+index aa90d95..7695e14 100644
 --- a/drivers/platform/x86/msi-wmi-platform.c
 +++ b/drivers/platform/x86/msi-wmi-platform.c
-@@ -290,6 +290,16 @@ static const struct dmi_system_id msi_quirks[] = {
+@@ -295,6 +295,16 @@ static const struct dmi_system_id msi_quirks[] = {
  	},
  };
  
@@ -38,7 +38,7 @@ index 6d361f7..c79d4a6 100644
  static int msi_wmi_platform_parse_buffer(union acpi_object *obj, u8 *output, size_t length)
  {
  	if (obj->type != ACPI_TYPE_BUFFER)
-@@ -1470,9 +1480,38 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+@@ -1475,9 +1485,38 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
  	return PTR_ERR_OR_ZERO(data->ppdev);
  }
  
@@ -77,7 +77,7 @@ index 6d361f7..c79d4a6 100644
  	const struct dmi_system_id *dmi_id;
  	int ret;
  
-@@ -1498,6 +1537,18 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+@@ -1503,6 +1542,18 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
  	if (ret < 0)
  		return ret;
  
