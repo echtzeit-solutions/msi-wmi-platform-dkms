@@ -31,6 +31,8 @@ Then see `keyboard-rgb/` and `suspend/` for the userspace/config bits.
 
 ## Layout
 - `msi-wmi-platform/` — the DKMS kernel module (+ upstream patch drafts).
+- `fan-curve/` — apply a custom fan curve (script + systemd unit + resume hook); ported from
+  the old msi-ec/isw model to the new hwmon interface.
 - `keyboard-rgb/` — per-key RGB setup.
 - `suspend/` — s2idle + suspend-then-hibernate config.
 - `docs/` — reverse-engineering notes, EC register map, fan-curve/RPM data, upstream status.

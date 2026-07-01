@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Apply a fan curve to the msi-wmi-platform hwmon device (hardware curve; the EC runs it).
+# Ported from the isw model: 6 temperature points -> 6 speed points, per fan (CPU=pwm1, GPU=pwm2).
+# Usage: msi-fan-curve [CONFFILE]   (default /etc/msi-fan-curve.conf)
+set -euo pipefail
+
+CONF="${1:-/etc/msi-fan-curve.conf}"
+[[ -r "$CONF" ]] || { echo "config not found: $CONF" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$CONF"
+
+# locate the msi_wmi_platform hwmon
+H=""
+for d in /sys/class/hwmon/hwmon*; do
+    [[ "$(cat "$d/name" 2>/dev/null)" == "msi_wmi_platform" ]] && { H="$d"; break; }
+done
+[[ -n "$H" ]] || { echo "msi_wmi_platform hwmon not found (is the module loaded?)" >&2; exit 1; }
+
+pct2pwm() { echo $(( ($1 * 255 + 50) / 100 )); }   # percent (0-100) -> pwm (0-255), rounded
+
+apply_curve() {   # $1=pwm index (1=CPU,2=GPU)  $2="temps..."  $3="speeds%..."
+    local idx="$1"; local -a T S; read -r -a T <<<"$2"; read -r -a S <<<"$3"
+    for i in 0 1 2 3 4 5; do
+        echo "${T[$i]}"            > "$H/pwm${idx}_auto_point$((i+1))_temp"
+        echo "$(pct2pwm "${S[$i]}")" > "$H/pwm${idx}_auto_point$((i+1))_pwm"
+    done
+}
+
+echo 1 > "$H/pwm1_enable"          # manual mode: engage user fan tables (global bit)
+apply_curve 1 "$CPU_TEMP" "$CPU_SPEED"
+apply_curve 2 "$GPU_TEMP" "$GPU_SPEED"
+echo "applied fan curve from $CONF to $H"

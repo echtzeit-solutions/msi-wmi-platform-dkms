@@ -1,0 +1,13 @@
+[Unit]
+Description=MSI MS-16V5 fan curve (msi-wmi-platform)
+After=multi-user.target
+# Resume is handled by the system-sleep hook (50-msi-fan-curve), since the EC
+# drops the manual fan tables across suspend.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/msi-fan-curve /etc/msi-fan-curve.conf
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

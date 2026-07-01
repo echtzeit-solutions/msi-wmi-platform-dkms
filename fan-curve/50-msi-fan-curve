@@ -1,0 +1,10 @@
+#!/bin/sh
+# systemd-sleep hook: re-apply the fan curve on resume.
+# Install to /usr/lib/systemd/system-sleep/  (chmod +x). Runs pre-sleep and post-resume;
+# we only act on resume ("post"), since the EC drops the manual fan tables across suspend.
+case "$1" in
+    post)
+        [ -x /usr/local/bin/msi-fan-curve ] && \
+            /usr/local/bin/msi-fan-curve /etc/msi-fan-curve.conf || true
+        ;;
+esac
