@@ -1,0 +1,8 @@
+# /etc/systemd/sleep.conf.d/10-ms16v5.conf
+# Suspend-then-hibernate: light s2idle first, hibernate after the delay.
+[Sleep]
+# Light-sleep state used before hibernating (keep s2idle for lid-wake):
+SuspendState=freeze
+# How long to stay in light sleep before hibernating (adjust to taste):
+HibernateDelaySec=90min
+# (systemd v256+ can also estimate from battery; see systemd-sleep.conf(5))

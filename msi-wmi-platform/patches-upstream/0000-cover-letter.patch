@@ -1,0 +1,41 @@
+From cf0a578de7f597d6f444fea8053da1b44e98e49b Mon Sep 17 00:00:00 2001
+From: Florian <heeen.de@gmail.com>
+Date: Wed, 1 Jul 2026 19:17:24 +0200
+Subject: [PATCH 0/3] platform/x86: msi-wmi-platform: add MS-16V5 (GS66 12Ux) support
+
+Adds MSI MS-16V5 (Stealth GS66 12UHS and siblings) support to the
+in-review msi-wmi-platform fan-curve/platform_profile/charge series, plus
+two general improvements found while enabling it.
+
+Tested on a GS66 12UHS (EC 16V5EMS1.108): hwmon fan RPM + pwm1/pwm2 fan
+curves (CPU/GPU), platform_profile (EC shift-mode 0xD2) and battery charge
+threshold (EC 0xD7) all work; charge stop + start=end-10 hysteresis and the
+resume re-apply were verified on hardware.
+
+Patch 1 adds the board quirk. Patch 2 fixes a general suspend/resume issue
+(the EC drops shift-mode across suspend and the firmware does not restore
+it). Patch 3 lets a board family be matched by its 4-char EC firmware ID
+instead of enumerating every DMI board name.
+
+Note: based on the in-review fan-curve/profile/tdp/battery series and needs
+rebasing onto its current revision before submission; TDP (PLx) left unset
+for MS-16V5 pending validated limits.
+
+Developed with AI assistance per Documentation/process/coding-assistants.rst
+(see Assisted-by trailers). The submitter has reviewed the changes and takes
+responsibility per the Signed-off-by.
+
+
+Florian (1):
+  platform/x86: msi-wmi-platform: add MS-16V5 (Stealth GS66 12Ux) quirk
+
+dev (2):
+  platform/x86: msi-wmi-platform: re-apply platform_profile on resume
+  platform/x86: msi-wmi-platform: match quirks by EC firmware ID
+
+ drivers/platform/x86/msi-wmi-platform.c | 115 +++++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 3 deletions(-)
+
+-- 
+2.53.0
+

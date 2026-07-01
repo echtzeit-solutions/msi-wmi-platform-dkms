@@ -1,0 +1,101 @@
+From cf0a578de7f597d6f444fea8053da1b44e98e49b Mon Sep 17 00:00:00 2001
+From: dev <dev@local>
+Date: Wed, 1 Jul 2026 16:12:44 +0200
+Subject: [PATCH 3/3] platform/x86: msi-wmi-platform: match quirks by EC
+ firmware ID
+
+One EC firmware family (e.g. "16V5") covers many marketing SKUs
+(GS66 12UHS/12UGS/12UE/...) that do not all share a single DMI board name.
+Match quirks by the 4-character EC firmware ID prefix (read from EC RAM
+0xA0 via the WMI Get_Data method) in addition to the DMI board name, so a
+whole board family is covered by one entry. The EC-ID match takes
+precedence and falls back to the DMI table when the EC ID is unknown.
+
+Signed-off-by: Florian <heeen.de@gmail.com>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 51 +++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 6d361f7..c79d4a6 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -290,6 +290,16 @@ static const struct dmi_system_id msi_quirks[] = {
+ 	},
+ };
+ 
++/* Match by EC firmware ID prefix (EC RAM 0xA0.., e.g. "16V5EMS1" -> "16V5"). */
++struct msi_wmi_platform_ec_quirk {
++	const char *ec_id;
++	struct msi_wmi_platform_quirk *quirk;
++};
++static const struct msi_wmi_platform_ec_quirk msi_ec_quirks[] = {
++	{ "16V5", &quirk_16v5 },	/* Stealth GS66 12Ux and MS-16V5 siblings */
++	{ }
++};
++
+ static int msi_wmi_platform_parse_buffer(union acpi_object *obj, u8 *output, size_t length)
+ {
+ 	if (obj->type != ACPI_TYPE_BUFFER)
+@@ -1470,9 +1480,38 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+ 	return PTR_ERR_OR_ZERO(data->ppdev);
+ }
+ 
++#define MSI_PLATFORM_ECID_ADDR	0xa0
++#define MSI_PLATFORM_ECID_LEN	4
++
++/* Read the 4-char EC firmware ID prefix and return a matching quirk, or NULL. */
++static struct msi_wmi_platform_quirk *
++msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
++{
++	const struct msi_wmi_platform_ec_quirk *e;
++	char id[MSI_PLATFORM_ECID_LEN + 1] = { };
++	u8 buffer[32];
++	int i, ret;
++
++	for (i = 0; i < MSI_PLATFORM_ECID_LEN; i++) {
++		memset(buffer, 0, sizeof(buffer));
++		buffer[0] = MSI_PLATFORM_ECID_ADDR + i;
++		ret = msi_wmi_platform_query(data, MSI_PLATFORM_GET_DATA, buffer, sizeof(buffer));
++		if (ret < 0 || buffer[0] != 1)
++			return NULL;
++		id[i] = buffer[1];
++	}
++
++	for (e = msi_ec_quirks; e->ec_id; e++)
++		if (!strncmp(id, e->ec_id, MSI_PLATFORM_ECID_LEN))
++			return e->quirk;
++
++	return NULL;
++}
++
+ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ {
+ 	struct msi_wmi_platform_data *data;
++	struct msi_wmi_platform_quirk *quirk;
+ 	const struct dmi_system_id *dmi_id;
+ 	int ret;
+ 
+@@ -1498,6 +1537,18 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/*
++	 * Prefer EC-firmware-ID matching (4-char prefix, e.g. "16V5") over the DMI
++	 * board name: one EC family covers many marketing SKUs (12UHS/UGS/UE/...).
++	 * Falls back to the DMI match set above if the EC ID is unknown.
++	 */
++	quirk = msi_wmi_platform_match_ec_id(data);
++	if (quirk)
++		data->quirks = quirk;
++
++	dev_info(&wdev->dev, "quirks matched via %s\n",
++		 quirk ? "EC firmware ID" : dmi_id ? "DMI board name" : "default (none)");
++
+ 	ret = msi_wmi_platform_ec_init(data);
+ 	if (ret < 0)
+ 		return ret;
+-- 
+2.53.0
+

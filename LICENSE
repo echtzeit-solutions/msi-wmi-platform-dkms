@@ -1,0 +1,6 @@
+This project is licensed under the GNU General Public License version 2.
+The kernel module (msi-wmi-platform/) is GPL-2.0-or-later, matching the Linux
+kernel source it derives from (see SPDX headers in the source files).
+
+Full text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+SPDX-License-Identifier: GPL-2.0-or-later

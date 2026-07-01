@@ -1,0 +1,122 @@
+From 5b0b7a9975eb243faa6b886606692a8fccca8cda Mon Sep 17 00:00:00 2001
+From: dev <dev@local>
+Date: Wed, 1 Jul 2026 15:36:44 +0200
+Subject: [PATCH 2/3] platform/x86: msi-wmi-platform: re-apply platform_profile
+ on resume
+
+On MSI notebooks the EC resets "shift mode" (which backs platform_profile)
+to its default across suspend/resume, and the firmware _WAK method does not
+restore it, so a user-selected profile is silently lost on resume (verified
+on MS-16V5: EC shift-mode 0xD2 reverts performance -> balanced).
+
+Cache the last-selected profile and re-apply it from a resume PM callback
+(only when the shift_mode quirk is set).
+
+Signed-off-by: Florian <heeen.de@gmail.com>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 45 +++++++++++++++++++++++--
+ 1 file changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 5b4d406..6d361f7 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -145,6 +145,7 @@ struct msi_wmi_platform_data {
+ 	struct acpi_battery_hook battery_hook;
+ 	struct device *fw_attrs_dev;
+ 	struct kset *fw_attrs_kset;
++	enum platform_profile_option cur_profile;	/* last-set profile, re-applied on resume */
+ };
+ 
+ enum msi_fw_attr_id {
+@@ -831,10 +832,9 @@ static int msi_wmi_platform_profile_get(struct device *dev,
+ 	}
+ }
+ 
+-static int msi_wmi_platform_profile_set(struct device *dev,
+-					enum platform_profile_option profile)
++static int msi_wmi_platform_profile_apply(struct msi_wmi_platform_data *data,
++					  enum platform_profile_option profile)
+ {
+-	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+ 	u8 buffer[32] = { };
+ 
+ 	buffer[0] = MSI_PLATFORM_SHIFT_ADDR;
+@@ -862,6 +862,21 @@ static int msi_wmi_platform_profile_set(struct device *dev,
+ 	return msi_wmi_platform_query(data, MSI_PLATFORM_SET_DATA, buffer, sizeof(buffer));
+ }
+ 
++static int msi_wmi_platform_profile_set(struct device *dev,
++					enum platform_profile_option profile)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++	int ret;
++
++	ret = msi_wmi_platform_profile_apply(data, profile);
++	if (ret < 0)
++		return ret;
++
++	/* Cache so we can re-apply after suspend (the EC resets shift mode on resume). */
++	data->cur_profile = profile;
++	return 0;
++}
++
+ static const struct platform_profile_ops msi_wmi_platform_profile_ops = {
+ 	.probe = msi_wmi_platform_profile_probe,
+ 	.profile_get = msi_wmi_platform_profile_get,
+@@ -1466,6 +1481,7 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 		return -ENOMEM;
+ 
+ 	data->wdev = wdev;
++	data->cur_profile = PLATFORM_PROFILE_BALANCED;
+ 	dev_set_drvdata(&wdev->dev, data);
+ 
+ 	dmi_id = dmi_first_match(msi_quirks);
+@@ -1501,6 +1517,10 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 
+ 	msi_wmi_platform_profile_setup(data);
+ 
++	/* Seed cached profile from the current EC state for resume re-apply. */
++	if (data->quirks->shift_mode)
++		msi_wmi_platform_profile_get(&wdev->dev, &data->cur_profile);
++
+ 	if (data->quirks->restore_curves) {
+ 		guard(mutex)(&data->wmi_lock);
+ 		ret = msi_wmi_platform_curves_save(data);
+@@ -1524,6 +1544,24 @@ static void msi_wmi_platform_remove(struct wmi_device *wdev)
+ 	}
+ }
+ 
++/*
++ * The EC resets shift mode (platform_profile) to its default across suspend/resume
++ * (verified on MS-16V5: 0xD2 performance->balanced; the firmware _WAK does not
++ * restore it). Re-apply the last-selected profile on resume.
++ */
++static int msi_wmi_platform_resume(struct device *dev)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++
++	if (!data->quirks->shift_mode)
++		return 0;
++
++	return msi_wmi_platform_profile_apply(data, data->cur_profile);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(msi_wmi_platform_pm_ops, NULL,
++				msi_wmi_platform_resume);
++
+ static const struct wmi_device_id msi_wmi_platform_id_table[] = {
+ 	{ MSI_PLATFORM_GUID, NULL },
+ 	{ }
+@@ -1534,6 +1572,7 @@ static struct wmi_driver msi_wmi_platform_driver = {
+ 	.driver = {
+ 		.name = DRIVER_NAME,
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++		.pm = pm_sleep_ptr(&msi_wmi_platform_pm_ops),
+ 	},
+ 	.id_table = msi_wmi_platform_id_table,
+ 	.probe = msi_wmi_platform_probe,
+-- 
+2.53.0
+
