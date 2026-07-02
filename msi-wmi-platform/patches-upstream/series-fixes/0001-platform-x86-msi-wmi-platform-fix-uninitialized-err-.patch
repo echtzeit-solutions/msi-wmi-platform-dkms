@@ -1,0 +1,41 @@
+From 3b8d8fc16a84a7d797d52fd89d31efa4cbc448d4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Thu, 2 Jul 2026 20:28:52 +0200
+Subject: [PATCH 1/2] platform/x86: msi-wmi-platform: fix uninitialized err in
+ profile_setup
+
+msi_wmi_platform_profile_setup() declares `int err` and tests `if (err)`
+before assigning it -- devm_platform_profile_register() returns its
+result via data->ppdev, not err. Drop the uninitialized check;
+PTR_ERR_OR_ZERO() already reports registration failure.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index dfb65ac..4158376 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -1422,16 +1422,12 @@ static int msi_wmi_platform_init(struct msi_wmi_platform_data *data)
+ 
+ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+ {
+-	int err;
+-
+ 	if (!data->quirks->shift_mode)
+ 		return 0;
+ 
+ 	data->ppdev = devm_platform_profile_register(
+ 		&data->wdev->dev, "msi-wmi-platform", data,
+ 		&msi_wmi_platform_profile_ops);
+-	if (err)
+-		return err;
+ 
+ 	return PTR_ERR_OR_ZERO(data->ppdev);
+ }
+-- 
+2.53.0
+
