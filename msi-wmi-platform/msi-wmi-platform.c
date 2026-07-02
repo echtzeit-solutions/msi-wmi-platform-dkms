@@ -188,6 +188,7 @@ struct msi_wmi_platform_data {
 	u8 fan_table_cpu[32];
 	u8 fan_table_gpu[32];
 	bool fan_tables_enabled;
+	bool curves_saved;	/* factory fan curves fully snapshotted -> safe to restore */
 	DECLARE_BITMAP(features, MSI_FEAT_COUNT);	/* enabled features (msi_feature_id) */
 };
 
@@ -218,7 +219,8 @@ static bool msi_control_supported(struct msi_wmi_platform_data *data)
 		return true;
 
 	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
-	if (!vendor || !strstr(vendor, "Micro-Star"))
+	/* DMI reports either "Micro-Star International…" or all-caps "MICRO-STAR…". */
+	if (!vendor || (!strstr(vendor, "Micro-Star") && !strstr(vendor, "MICRO-STAR")))
 		return false;
 
 	/* SMBIOS chassis type: 0x0A Notebook or 0x1F Convertible (as MSI checks). */
@@ -1687,11 +1689,20 @@ static int msi_feat_fan_curves_detect(struct msi_wmi_platform_data *data)
 static int msi_feat_fan_curves_setup(struct msi_wmi_platform_data *data)
 {
 	guard(mutex)(&data->wmi_lock);
-	return msi_wmi_platform_curves_save(data);
+	/*
+	 * Best-effort factory-curve snapshot for restore-on-unload. A failure must
+	 * not disable fan control or leave a partial snapshot behind: only mark it
+	 * restorable once the full snapshot succeeded, and always keep the feature.
+	 */
+	if (!msi_wmi_platform_curves_save(data))
+		data->curves_saved = true;
+	return 0;
 }
 
 static void msi_feat_fan_curves_remove(struct msi_wmi_platform_data *data)
 {
+	if (!data->curves_saved)
+		return;
 	guard(mutex)(&data->wmi_lock);
 	msi_wmi_platform_curves_load(data);
 }
@@ -1704,6 +1715,8 @@ static int msi_feat_fan_curves_suspend(struct msi_wmi_platform_data *data)
 {
 	u8 buffer[32] = { MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE };
 
+	/* Default off so a failed GET_AP can't make resume restore stale tables. */
+	data->fan_tables_enabled = false;
 	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)))
 		data->fan_tables_enabled = buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] &
 					   MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
@@ -1743,6 +1756,7 @@ static int msi_feat_fan_curves_resume(struct msi_wmi_platform_data *data)
 
 struct msi_wmi_platform_feature {
 	const char *name;
+	bool required;						/* setup failure is fatal to probe */
 	int  (*detect)(struct msi_wmi_platform_data *data);	/* >0 enable, 0 skip, <0 fatal */
 	int  (*setup)(struct msi_wmi_platform_data *data);
 	void (*remove)(struct msi_wmi_platform_data *data);	/* non-devm teardown (optional) */
@@ -1753,6 +1767,7 @@ struct msi_wmi_platform_feature {
 static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
 	[MSI_FEAT_HWMON] = {
 		.name = "hwmon",
+		.required = true,	/* fan/temp sensors are the driver's core function */
 		.detect = msi_feat_hwmon_detect,
 		.setup = msi_wmi_platform_hwmon_init,
 	},
@@ -1851,6 +1866,8 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 			continue;
 		ret = msi_features[fid].setup(data);
 		if (ret < 0) {
+			if (msi_features[fid].required)
+				return ret;
 			dev_warn(&wdev->dev, "feature %s setup failed: %d\n",
 				 msi_features[fid].name, ret);
 			__clear_bit(fid, data->features);
