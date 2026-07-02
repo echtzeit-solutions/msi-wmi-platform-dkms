@@ -1,0 +1,173 @@
+From 6ea92e20ae110475c8373c5f51c18bfc245d5180 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Thu, 2 Jul 2026 22:28:56 +0200
+Subject: [PATCH] platform/x86: msi-wmi-platform: gate control by a runtime
+ heuristic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The control features (platform_profile, charge threshold, fan curves)
+have no runtime capability bit: the generic EC read/write always
+"succeeds" even on hardware that does not implement them, and the
+shift-mode "ability" bit is written by the OS, not read back. Gating
+them on a per-model quirk table therefore does not scale -- MSI ships
+1000+ marketing models.
+
+MSI's own Windows software does not use a per-model allow-list either.
+Its Features.IsSupport() enables these features on any MSI notebook or
+convertible (SMBIOS manufacturer + chassis type 0x0A/0x1F) within a
+supported CPU-generation window, with a small deny-list for the
+exceptions -- no EC probe. WMI interface v2 and a Tigerlake-class EC
+are already required to bind here (msi_wmi_platform_init() and
+_ec_init()), which bounds this to the modern platform generation, so
+mirror the safe core of that policy: msi_control_supported() enables
+control on an MSI notebook or convertible.
+
+The quirk table now carries only what cannot be probed -- physical fan
+count and TDP limits -- plus force_control (boards the notebook
+heuristic misses, e.g. the Claw handhelds) and deny_control
+(known-incompatible models) overrides.
+
+This lights up profile/charge/fan control generically on modern MSI
+notebooks with no per-model entry (verified on a Stealth GS66 12UHS /
+MS-16V5, which has no quirk entry).
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 60 ++++++++++++++++++-------
+ 1 file changed, 44 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index dfb65ac..00b3fc1 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -120,10 +120,9 @@ enum msi_wmi_platform_method {
+ };
+ 
+ struct msi_wmi_platform_quirk {
+-	bool shift_mode;	/* Shift mode is supported */
+-	bool charge_threshold;	/* Charge threshold is supported */
+-	bool dual_fans;		/* For devices with two hwmon fans */
+-	bool restore_curves;	/* Restore factory curves on unload */
++	bool dual_fans;		/* two hwmon fans instead of four */
++	bool force_control;	/* enable control even where the heuristic fails (handhelds) */
++	bool deny_control;	/* disable control even where the heuristic passes */
+ 	int pl_min;		/* Minimum PLx value */
+ 	int pl1_max;		/* Maximum PL1 value */
+ 	int pl2_max;		/* Maximum PL2 value */
+@@ -225,19 +224,15 @@ static const char * const msi_wmi_platform_debugfs_names[] = {
+ 
+ static struct msi_wmi_platform_quirk quirk_default = {};
+ static struct msi_wmi_platform_quirk quirk_gen1 = {
+-	.shift_mode = true,
+-	.charge_threshold = true,
+ 	.dual_fans = true,
+-	.restore_curves = true,
++	.force_control = true,
+ 	.pl_min = 8,
+ 	.pl1_max = 43,
+ 	.pl2_max = 45
+ };
+ static struct msi_wmi_platform_quirk quirk_gen2 = {
+-	.shift_mode = true,
+-	.charge_threshold = true,
+ 	.dual_fans = true,
+-	.restore_curves = true,
++	.force_control = true,
+ 	.pl_min = 8,
+ 	.pl1_max = 30,
+ 	.pl2_max = 37
+@@ -270,6 +265,39 @@ static const struct dmi_system_id msi_quirks[] = {
+ 	},
+ };
+ 
++/*
++ * Decide whether the control features (platform_profile, charge threshold, fan
++ * curves) may be enabled. They have no runtime capability bit -- the generic EC
++ * read/write always "succeeds" even on hardware that doesn't implement them --
++ * so gate them the way MSI Center's Features.IsSupport() does: an MSI notebook
++ * or convertible. This covers modern MSI notebooks generically instead of a
++ * per-model allow-list. WMI v2 and a Tigerlake+ EC are already required to bind
++ * (msi_wmi_platform_init()/_ec_init()), so only vendor and chassis remain. A
++ * quirk may still force-enable it (boards the heuristic misses, e.g. handhelds)
++ * or deny it (known-incompatible models).
++ */
++static bool msi_control_supported(struct msi_wmi_platform_data *data)
++{
++	const char *vendor, *chassis;
++	unsigned long chassis_type;
++
++	if (data->quirks->deny_control)
++		return false;
++	if (data->quirks->force_control)
++		return true;
++
++	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
++	if (!vendor || (!strstr(vendor, "Micro-Star") && !strstr(vendor, "MICRO-STAR")))
++		return false;
++
++	/* SMBIOS chassis type 0x0A (Notebook) or 0x1F (Convertible), as MSI checks. */
++	chassis = dmi_get_system_info(DMI_CHASSIS_TYPE);
++	if (!chassis || kstrtoul(chassis, 10, &chassis_type))
++		return false;
++
++	return chassis_type == 0x0a || chassis_type == 0x1f;
++}
++
+ static int msi_wmi_platform_parse_buffer(union acpi_object *obj, u8 *output, size_t length)
+ {
+ 	if (obj->type != ACPI_TYPE_BUFFER)
+@@ -708,7 +736,7 @@ static int msi_wmi_platform_write(struct device *dev, enum hwmon_sensor_types ty
+ 			if (ret < 0)
+ 				return ret;
+ 
+-			if (val == 2 && data->quirks->restore_curves) {
++			if (val == 2 && msi_control_supported(data)) {
+ 				ret = msi_wmi_platform_curves_load(data);
+ 				if (ret < 0)
+ 					return ret;
+@@ -1424,7 +1452,7 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+ {
+ 	int err;
+ 
+-	if (!data->quirks->shift_mode)
++	if (!msi_control_supported(data))
+ 		return 0;
+ 
+ 	data->ppdev = devm_platform_profile_register(
+@@ -1471,7 +1499,7 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (data->quirks->charge_threshold) {
++	if (msi_control_supported(data)) {
+ 		data->battery_hook.name = "MSI Battery";
+ 		data->battery_hook.add_battery = msi_wmi_platform_battery_add;
+ 		data->battery_hook.remove_battery = msi_wmi_platform_battery_remove;
+@@ -1482,7 +1510,7 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 
+ 	msi_wmi_platform_profile_setup(data);
+ 
+-	if (data->quirks->restore_curves) {
++	if (msi_control_supported(data)) {
+ 		guard(mutex)(&data->wmi_lock);
+ 		ret = msi_wmi_platform_curves_save(data);
+ 		if (ret < 0)
+@@ -1496,10 +1524,10 @@ static void msi_wmi_platform_remove(struct wmi_device *wdev)
+ {
+ 	struct msi_wmi_platform_data *data = dev_get_drvdata(&wdev->dev);
+ 
+-	if (data->quirks->charge_threshold)
++	if (msi_control_supported(data))
+ 		battery_hook_unregister(&data->battery_hook);
+ 
+-	if (data->quirks->restore_curves) {
++	if (msi_control_supported(data)) {
+ 		guard(mutex)(&data->wmi_lock);
+ 		msi_wmi_platform_curves_load(data);
+ 	}
+-- 
+2.53.0
+
