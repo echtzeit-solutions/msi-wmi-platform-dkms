@@ -127,7 +127,7 @@ enum msi_wmi_platform_method {
 	MSI_PLATFORM_GET_WMI		= 0x1d,
 };
 
-struct msi_wmi_platform_quirk {
+struct msi_wmi_platform_model {
 	bool shift_mode;	/* Shift mode is supported */
 	bool charge_threshold;	/* Charge threshold is supported */
 	bool dual_fans;		/* For devices with two hwmon fans */
@@ -176,7 +176,7 @@ struct msi_wmi_platform_caps {
 
 struct msi_wmi_platform_data {
 	struct wmi_device *wdev;
-	struct msi_wmi_platform_quirk *quirks;
+	struct msi_wmi_platform_model *model;
 	struct msi_wmi_platform_caps caps;
 	struct mutex wmi_lock;	/* Necessary when calling WMI methods */
 	struct device *ppdev;
@@ -202,13 +202,13 @@ static inline bool msi_feature_enabled(const struct msi_wmi_platform_data *data,
  * Per-family control allow-list. Control features (profile/charge/fan-curves)
  * have no runtime capability bit -- the generic EC read/write always succeeds --
  * so, like MSI Center's model manifest, they are permitted only on verified
- * boards (via the quirk table, keyed by EC-ID/DMI). Unknown boards get read-only
+ * boards (via the per-family model table, keyed by EC-ID/DMI). Unknown boards get read-only
  * sensors, nothing that drives the EC.
  */
 static bool msi_wmi_platform_model_allows(struct msi_wmi_platform_data *data,
 					  enum msi_feature_id id)
 {
-	const struct msi_wmi_platform_quirk *q = data->quirks;
+	const struct msi_wmi_platform_model *q = data->model;
 
 	switch (id) {
 	case MSI_FEAT_PROFILE:
@@ -298,8 +298,8 @@ static const char * const msi_wmi_platform_debugfs_names[] = {
 	"get_wmi"
 };
 
-static struct msi_wmi_platform_quirk quirk_default = {};
-static struct msi_wmi_platform_quirk quirk_gen1 = {
+static struct msi_wmi_platform_model model_default = {};
+static struct msi_wmi_platform_model model_gen1 = {
 	.shift_mode = true,
 	.charge_threshold = true,
 	.dual_fans = true,
@@ -308,7 +308,7 @@ static struct msi_wmi_platform_quirk quirk_gen1 = {
 	.pl1_max = 43,
 	.pl2_max = 45
 };
-static struct msi_wmi_platform_quirk quirk_gen2 = {
+static struct msi_wmi_platform_model model_gen2 = {
 	.shift_mode = true,
 	.charge_threshold = true,
 	.dual_fans = true,
@@ -322,21 +322,21 @@ static struct msi_wmi_platform_quirk quirk_gen2 = {
  * shift-mode/charge/dual-fan/curve-restore verified on 12UHS (EC 16V5EMS1.108).
  * TDP (PLx) left unset: no validated PL1/PL2 limits for this board yet.
  */
-static struct msi_wmi_platform_quirk quirk_16v5 = {
+static struct msi_wmi_platform_model model_16v5 = {
 	.shift_mode = true,
 	.charge_threshold = true,
 	.dual_fans = true,
 	.restore_curves = true,
 };
 
-static const struct dmi_system_id msi_quirks[] = {
+static const struct dmi_system_id msi_models[] = {
 	{
 		.ident = "MSI Stealth GS66 12Ux (MS-16V5)",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International Co., Ltd."),
 			DMI_MATCH(DMI_BOARD_NAME, "MS-16V5"),
 		},
-		.driver_data = &quirk_16v5,
+		.driver_data = &model_16v5,
 	},
 	{
 		.ident = "MSI Claw (gen 1)",
@@ -344,7 +344,7 @@ static const struct dmi_system_id msi_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International Co., Ltd."),
 			DMI_MATCH(DMI_BOARD_NAME, "MS-1T41"),
 		},
-		.driver_data = &quirk_gen1,
+		.driver_data = &model_gen1,
 	},
 	{
 		.ident = "MSI Claw AI+ 7",
@@ -352,7 +352,7 @@ static const struct dmi_system_id msi_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International Co., Ltd."),
 			DMI_MATCH(DMI_BOARD_NAME, "MS-1T42"),
 		},
-		.driver_data = &quirk_gen2,
+		.driver_data = &model_gen2,
 	},
 	{
 		.ident = "MSI Claw AI+ 8",
@@ -360,17 +360,17 @@ static const struct dmi_system_id msi_quirks[] = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International Co., Ltd."),
 			DMI_MATCH(DMI_BOARD_NAME, "MS-1T52"),
 		},
-		.driver_data = &quirk_gen2,
+		.driver_data = &model_gen2,
 	},
 };
 
 /* Match by EC firmware ID prefix (EC RAM 0xA0.., e.g. "16V5EMS1" -> "16V5"). */
-struct msi_wmi_platform_ec_quirk {
+struct msi_wmi_platform_ec_model {
 	const char *ec_id;
-	struct msi_wmi_platform_quirk *quirk;
+	struct msi_wmi_platform_model *model_sel;
 };
-static const struct msi_wmi_platform_ec_quirk msi_ec_quirks[] = {
-	{ "16V5", &quirk_16v5 },	/* Stealth GS66 12Ux and MS-16V5 siblings */
+static const struct msi_wmi_platform_ec_model msi_ec_models[] = {
+	{ "16V5", &model_16v5 },	/* Stealth GS66 12Ux and MS-16V5 siblings */
 	{ }
 };
 
@@ -815,7 +815,7 @@ static int msi_wmi_platform_write(struct device *dev, enum hwmon_sensor_types ty
 			if (ret < 0)
 				return ret;
 
-			if (val == 2 && data->quirks->restore_curves) {
+			if (val == 2 && data->model->restore_curves) {
 				ret = msi_wmi_platform_curves_load(data);
 				if (ret < 0)
 					return ret;
@@ -1249,19 +1249,19 @@ static int msi_wmi_fw_attrs_init(struct msi_wmi_platform_data *data)
 	if (err)
 		return err;
 
-	if (data->quirks->pl1_max) {
+	if (data->model->pl1_max) {
 		err = msi_fw_attr_init(data, MSI_ATTR_PPT_PL1_SPL,
-					&fw_attr_type_int, data->quirks->pl_min,
-					data->quirks->pl1_max, &data_get_value,
+					&fw_attr_type_int, data->model->pl_min,
+					data->model->pl1_max, &data_get_value,
 					&data_set_value);
 		if (err)
 			return err;
 	}
 
-	if (data->quirks->pl2_max) {
+	if (data->model->pl2_max) {
 		err = msi_fw_attr_init(data, MSI_ATTR_PPT_PL2_SPPT,
-				       &fw_attr_type_int, data->quirks->pl_min,
-				       data->quirks->pl2_max, &data_get_value,
+				       &fw_attr_type_int, data->model->pl_min,
+				       data->model->pl2_max, &data_get_value,
 				       &data_set_value);
 		if (err)
 			return err;
@@ -1485,7 +1485,7 @@ static int msi_wmi_platform_hwmon_init(struct msi_wmi_platform_data *data)
 
 	hdev = devm_hwmon_device_register_with_info(
 		&data->wdev->dev, "msi_wmi_platform", data,
-		data->quirks->dual_fans ? &msi_wmi_platform_chip_info_dual :
+		data->model->dual_fans ? &msi_wmi_platform_chip_info_dual :
 					&msi_wmi_platform_chip_info,
 		groups);
 
@@ -1557,7 +1557,7 @@ static int msi_wmi_platform_init(struct msi_wmi_platform_data *data)
 
 static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
 {
-	if (!data->quirks->shift_mode)
+	if (!data->model->shift_mode)
 		return 0;
 
 	data->ppdev = devm_platform_profile_register(
@@ -1567,11 +1567,11 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
 	return PTR_ERR_OR_ZERO(data->ppdev);
 }
 
-/* Read the 4-char EC firmware ID prefix and return a matching quirk, or NULL. */
-static struct msi_wmi_platform_quirk *
+/* Read the 4-char EC firmware ID prefix and return the matching model, or NULL. */
+static struct msi_wmi_platform_model *
 msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
 {
-	const struct msi_wmi_platform_ec_quirk *e;
+	const struct msi_wmi_platform_ec_model *e;
 	char id[MSI_PLATFORM_ECID_LEN + 1] = { };
 	u8 buffer[32];
 	int i, ret;
@@ -1587,9 +1587,9 @@ msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
 
 	strscpy(data->caps.ec_id, id, sizeof(data->caps.ec_id));
 
-	for (e = msi_ec_quirks; e->ec_id; e++)
+	for (e = msi_ec_models; e->ec_id; e++)
 		if (!strncmp(id, e->ec_id, MSI_PLATFORM_ECID_LEN))
-			return e->quirk;
+			return e->model_sel;
 
 	return NULL;
 }
@@ -1768,7 +1768,7 @@ static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
 static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 {
 	struct msi_wmi_platform_data *data;
-	struct msi_wmi_platform_quirk *quirk;
+	struct msi_wmi_platform_model *model_sel;
 	const struct dmi_system_id *dmi_id;
 	unsigned int fid;
 	int ret;
@@ -1781,11 +1781,11 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 	data->cur_profile = PLATFORM_PROFILE_BALANCED;
 	dev_set_drvdata(&wdev->dev, data);
 
-	dmi_id = dmi_first_match(msi_quirks);
+	dmi_id = dmi_first_match(msi_models);
 	if (dmi_id)
-		data->quirks = dmi_id->driver_data;
+		data->model = dmi_id->driver_data;
 	else
-		data->quirks = &quirk_default;
+		data->model = &model_default;
 
 	ret = devm_mutex_init(&wdev->dev, &data->wmi_lock);
 	if (ret < 0)
@@ -1800,12 +1800,12 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 	 * board name: one EC family covers many marketing SKUs (12UHS/UGS/UE/...).
 	 * Falls back to the DMI match set above if the EC ID is unknown.
 	 */
-	quirk = msi_wmi_platform_match_ec_id(data);
-	if (quirk)
-		data->quirks = quirk;
+	model_sel = msi_wmi_platform_match_ec_id(data);
+	if (model_sel)
+		data->model = model_sel;
 
-	dev_info(&wdev->dev, "quirks matched via %s\n",
-		 quirk ? "EC firmware ID" : dmi_id ? "DMI board name" : "default (none)");
+	dev_info(&wdev->dev, "model matched via %s\n",
+		 model_sel ? "EC firmware ID" : dmi_id ? "DMI board name" : "default (none)");
 
 	ret = msi_wmi_platform_ec_init(data);
 	if (ret < 0)
