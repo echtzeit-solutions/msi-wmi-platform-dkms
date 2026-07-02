@@ -5,7 +5,7 @@
 set -euo pipefail
 
 PKG=msi-wmi-platform-ms16v5
-VER=0.4
+VER=0.5
 SRC="$(cd "$(dirname "$0")/msi-wmi-platform" && pwd)"
 
 if [[ $EUID -ne 0 ]]; then echo "Run as root (sudo ./install.sh)"; exit 1; fi

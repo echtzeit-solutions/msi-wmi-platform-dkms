@@ -9,6 +9,11 @@ fan-curve / platform_profile / charge series applied, **plus MS-16V5 additions**
   on `pm_resume_via_firmware()`, re-applies `platform_profile` + fan curve/mode on resume (no-op
   on s2idle). No userspace resume hook needed.
 - **EC-firmware-ID matching** — one `16V5` entry covers all `16V5EMS1.*` SKUs (no per-DMI list).
+- **Capability/feature-based architecture** — a runtime capability cache (`Get_Device(0x01)`
+  presence bitmap) + a `msi_features[]` descriptor table (detect/setup/suspend/resume per feature)
+  driven by a two-pass probe, mirroring how MSI Center decides features. Control features
+  (profile/charge/fan-curves) are gated by a per-family allow-list (the `model` table); unknown
+  boards get read-only sensors only. See `../docs/msi-center-architecture.md`.
 
 ## Install (recommended: the repo installer)
 ```bash
@@ -17,9 +22,9 @@ sudo ../install.sh
 
 ## Manual DKMS
 ```bash
-sudo cp -r . /usr/src/msi-wmi-platform-ms16v5-0.3
-sudo dkms add    -m msi-wmi-platform-ms16v5 -v 0.3
-sudo dkms install -m msi-wmi-platform-ms16v5 -v 0.3 --force
+sudo cp -r . /usr/src/msi-wmi-platform-ms16v5-0.5
+sudo dkms add    -m msi-wmi-platform-ms16v5 -v 0.5
+sudo dkms install -m msi-wmi-platform-ms16v5 -v 0.5 --force
 sudo modprobe -r msi_wmi_platform && sudo modprobe msi_wmi_platform
 ```
 Installs to `updates/dkms/` (overrides the in-tree module), DKMS auto-signs with your MOK
