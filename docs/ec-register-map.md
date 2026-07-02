@@ -37,7 +37,10 @@ driver will use WMI EC read/write (see `capability-map.md`).
 - **CPU temp points @ 0x6A** = `55,60,65,70,90,95,100`
 - **CPU speed points @ 0x72** = `45,50,60,65,80,85,100`
 - **GPU temp points @ 0x82** = `50,60,70,82,90,93,100`
-- **GPU speed points @ 0x8B** = `45,60,70,80,85,100`
+- **GPU speed points @ 0x8A** = `0,45,60,70,80,85,100` (7 entries; leading `0x8A=0x00` is the
+  silent-idle speed below the first temp — earlier notes mis-read this as `0x8B`/6 entries and
+  dropped the leading `0`. Corrected & re-confirmed live: `0x8A: 00 2d 3c 46 50 55 64`. Cross-checked
+  against msi-ec/MControlCenter/isw — see `register-consistency.md`.)
 Matches msi-ec CONF29 layout. Fan duty/RPM read-back likely at 0xC9/0xCB/0xCD (live: a0/9b/c6).
 
 ## Battery charge threshold — location confirmed, encoding TBD
