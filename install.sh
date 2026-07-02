@@ -4,7 +4,7 @@
 # auto-rebuilds on kernel updates. Run with sudo.
 set -euo pipefail
 
-PKG=msi-wmi-platform-ms16v5
+PKG=msi-wmi-platform-dkms
 VER=0.5
 SRC="$(cd "$(dirname "$0")/msi-wmi-platform" && pwd)"
 

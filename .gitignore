@@ -7,3 +7,9 @@ Module.symvers
 modules.order
 *.rej
 *.orig
+
+# regenerated MSI Center census artifacts (proprietary-derived; regenerate locally)
+msi-center-manifest/data/
+msi-center-manifest/*.sqlite
+__pycache__/
+*.pyc

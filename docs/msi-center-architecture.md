@@ -50,8 +50,9 @@ hardware-validated from msi-ec + EC-diff RE.
   file is `"<FeatureName>_<Version>.exe"` — keyed by **feature name + version only**, never
   model/board/EC-ID. Eligible machines of any family get the **same** binary.
 - The manifest (`PackageDataV2.dat`) is AES-256-CBC encrypted behind a `!!MSI!!` prefix:
-  `key = SHA256(CryptoKey)`, `iv = MD5(CryptoKey)`, `CryptoKey = (<recovered-from-CS_CommonAPI.dll>).ToString("X") = "<recovered>"`
-  (from `CS_CommonAPI.C_Encrypt.DecryptBase64`). Decrypt/query tooling: `../msi-center-manifest/`.
+  `key = SHA256(CryptoKey)`, `iv = MD5(CryptoKey)`, where `CryptoKey = (<int>).ToString("X")` and
+  `<int>` is a constant in `CS_CommonAPI.C_Encrypt`. The tooling recovers it from your own
+  `CS_CommonAPI.dll` rather than embedding it. Decrypt/query tooling: `../msi-center-manifest/`.
 - Census: **1,919 models × 21 NB components × 21,452 support edges**. Gating vocabulary:
   `Platform` (digit-flags; `1`=NB, `7`=NB+AI-Engine), `Allow`/`Deny`/`Allow_NBFamily`
   (marketing-name or `*<board>_<family>`), `DeviceType`/`DeviceID` (connected-USB gating).

@@ -1,11 +1,13 @@
-# Linux support for MSI Stealth GS66 12UHS (board MS-16V5)
+# Linux enablement for MSI notebooks (msi-wmi-platform)
 
-Community hardware-enablement for the MSI **Stealth GS66 12UHS** and its **MS-16V5**
-board siblings (EC firmware `16V5EMS1.*`, e.g. 12UGS/12UE) on modern Linux.
+Capability/feature-based Linux hardware support for MSI notebooks, built on the mainline
+**`msi-wmi-platform`** WMI driver: fan control, performance profiles, battery-charge limiting and a
+suspend/resume fix, plus keyboard-RGB and suspend setup notes.
 
-The centrepiece is a DKMS build of **`msi-wmi-platform`** with fan control, performance
-profiles, battery-charge limiting and a suspend fix, plus setup notes for the rest of the
-machine. Everything here was validated on a GS66 12UHS (EC `16V5EMS1.108`).
+The driver detects features at runtime (like MSI Center) and gates model-specific control through a
+per-family table, so it extends to new boards by data rather than code. **Verified on** the MSI
+Stealth GS66 12UHS (board MS-16V5, EC `16V5EMS1.*` — e.g. 12UHS/12UGS/12UE); other MSI WMI-platform
+notebooks get read-only sensors until their control path is verified.
 
 ## What works
 
