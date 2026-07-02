@@ -129,3 +129,17 @@ lid-wake, under s2idle it does. Post-wake profile=performance preserved (s2idle 
 .resume handler covers deep S3 where 0xD2 resets). To keep lid-wake permanently: drop
 mem_sleep_default=deep from GRUB (else reverts to deep on reboot). Tradeoff: s2idle = lid wake +
 higher sleep drain; deep = lower drain + button-only wake.
+
+## Generic / feature-based refactor — PLANNED (RFC candidate)
+RE of MSI Center 2.0.71.0 confirms the register layout is a **line-wide convention with no
+per-model/family branch** (only a WMI-version branch); MSI probes *presence* at runtime
+(`Get_Device(0x01)` bitmap) and offers *control* features generically, letting the EC firmware
+decide. See `msi-center-architecture.md` + `../msi-center-manifest/`.
+
+Planned driver restructure (matches Armin's capability-based direction; possible upstream RFC):
+- Replace quirk booleans with a **feature-descriptor table** (`detect()`/`setup()`/`suspend()`/
+  `resume()` per feature) + a **capability cache** (WMI/EC version + `Get_Device(0x01)` bitmap).
+- Per-family table (keyed by EC-ID) shrinks to a **control allow-list + register conventions**;
+  default-off on unrecognized boards (control leaks nowhere), presence features auto-probed.
+- Pre-req fix (upstreamable standalone): `msi_wmi_platform_profile_setup()` uses an
+  **uninitialized `err`** — should `return PTR_ERR_OR_ZERO(data->ppdev)`.

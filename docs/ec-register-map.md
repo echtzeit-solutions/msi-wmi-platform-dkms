@@ -81,9 +81,13 @@ MSI Center is **model-generic**: it does NOT keep per-model register tables. Ins
 - `Methods.16` / `Methods.22` = **read** EC block.
 - Legacy fallback: `MemRwService.Read/Write("98",…)` via named pipe → `root\WMI:Q|S:MSI_System`.
 Model differences are handled by: (a) `WmiMajorVersion` (firmware ABI version, not model),
-(b) runtime capability flags (`IsHavingAbilityToSupportShiftMode`, `IsSupport()`), (c) DMI
-`SystemProductName` + cloud manifest `DefineBaseV1.dat` (keyed by marketing name `MKT`, 38
-entries) for *feature enablement only*. Register addresses are a **line-wide convention**.
+(b) runtime capability flags (`IsHavingAbilityToSupportShiftMode`, `IsSupport()`, `Get_Device`
+bitmap), (c) DMI `SystemProductName` + cloud manifest (`DefineBaseV1.dat` + the AES-encrypted
+`PackageDataV2.dat`, keyed by marketing name) for *feature enablement only*. Register addresses
+are a **line-wide convention** — confirmed **uniform, no per-model/family branch** in MSI's own
+setters (only the WMI-version branch). The manifest was decrypted and censused (1,919 models ×
+21 NB components); the CDN serves **feature-generic** packages only — **no device-specific DLL**.
+See `../msi-center-manifest/` (decrypt tool + SQLite census) and `msi-center-architecture.md`.
 
 **Implication:** this is the same generic WMI method interface the in-tree `msi-wmi-platform`
 binds (`05901221` GUID). Our driver should mirror it — generic WMI read/write-byte + a small
@@ -91,9 +95,14 @@ shared address map + capability probing — which scales to MS-16Vx siblings far
 msi-ec's per-firmware CONF tables.
 
 ## MSI Center command protocol (for reference / live tracing)
-8-byte HID/WMI packets, e.g. `CMD_FanCoolerBoostON = {2,0,0,9,1,7,0,1}` / `OFF …0,2`,
+8-byte command frames, e.g. `CMD_FanCoolerBoostON = {2,0,0,9,1,7,0,1}` / `OFF …0,2`,
 `CMD_FanData {2,0,0,9,1,7,0,3}`, `CMD_SetFanAdvanced {0,21}`, `CMD_SetScenarioMode {0,18}`.
-Packet→EC-register mapping is done inside the EC firmware command handler (Ghidra task #5).
+These are built in the **managed** `BaseModule` and dispatched via
+`DataCenter.Transfer_ToAPI("Kernel", frame)` to the **native** engine (`API_Kernel.dll` /
+`*_Engine.dll`), which is where the frame→WMI/EC-register translation happens — it is **not** in
+the decompilable managed layer, so pinning MSI's exact charge/fan-curve selectors would need a
+Ghidra pass on `API_Kernel.dll` (low value: our msi-ec/EC-diff values above are hardware-validated).
+See `msi-center-architecture.md` for the full 3-layer model.
 
 ## Next confirmations
 1. EC firmware RE (labeling workflow + targeted): find the command handler that maps

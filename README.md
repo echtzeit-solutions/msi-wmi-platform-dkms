@@ -35,7 +35,10 @@ Then see `keyboard-rgb/` and `suspend/` for the userspace/config bits.
   the old msi-ec/isw model to the new hwmon interface.
 - `keyboard-rgb/` — per-key RGB setup.
 - `suspend/` — s2idle + suspend-then-hibernate config.
-- `docs/` — reverse-engineering notes, EC register map, fan-curve/RPM data, upstream status.
+- `msi-center-manifest/` — reverse-engineered MSI Center feature manifest: `!!MSI!!` decrypt tool +
+  a queryable SQLite census (1,919 models × 21 features) showing how MSI gates features.
+- `docs/` — reverse-engineering notes, EC register map, MSI Center architecture, fan-curve/RPM
+  data, upstream status.
 
 ## Status / upstreaming
 The driver is based on the in-review mainline `msi-wmi-platform`
