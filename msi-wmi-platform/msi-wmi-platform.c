@@ -84,6 +84,13 @@
 #define MSI_PLATFORM_PL2_ADDR	0x51
 #define MSI_PLATFORM_BAT_ADDR	0xd7
 
+/* Get_Data() EC firmware ID string (4-char prefix, e.g. "16V5") */
+#define MSI_PLATFORM_ECID_ADDR	0xa0
+#define MSI_PLATFORM_ECID_LEN	4
+
+/* Get_Device() hardware-presence bitmap (subfeature 0x01; result in Data[1..]) */
+#define MSI_PLATFORM_DEVICE_SUBFEATURE_PRESENCE	0x01
+
 static bool force;
 module_param_unsafe(force, bool, 0);
 MODULE_PARM_DESC(force, "Force loading without checking for supported WMI interface versions");
@@ -137,9 +144,26 @@ struct msi_wmi_platform_factory_curves {
 	u8 gpu_temp_table[32];
 };
 
+/*
+ * Runtime capability cache, probed once at ->probe(). Mirrors how MSI Center
+ * decides features: interface/EC versions gate the ABI, and the Get_Device(0x01)
+ * bitmap advertises hardware presence. Populated by msi_wmi_platform_init(),
+ * _ec_init(), _match_ec_id() and _caps_probe().
+ */
+struct msi_wmi_platform_caps {
+	bool wmi_valid;
+	u8 wmi_major, wmi_minor;
+	bool ec_valid, is_tigerlake;
+	u8 ec_major, ec_minor;
+	char ec_id[MSI_PLATFORM_ECID_LEN + 1];	/* 4-char EC prefix, e.g. "16V5" */
+	bool device_bitmap_valid;
+	u32 device_bitmap;			/* Get_Device(0x01) presence bits */
+};
+
 struct msi_wmi_platform_data {
 	struct wmi_device *wdev;
 	struct msi_wmi_platform_quirk *quirks;
+	struct msi_wmi_platform_caps caps;
 	struct mutex wmi_lock;	/* Necessary when calling WMI methods */
 	struct device *ppdev;
 	struct msi_wmi_platform_factory_curves factory_curves;
@@ -1433,6 +1457,11 @@ static int msi_wmi_platform_ec_init(struct msi_wmi_platform_data *data)
 	dev_dbg(&data->wdev->dev, "EC firmware version %.28s\n",
 		&buffer[MSI_PLATFORM_EC_VERSION_OFFSET]);
 
+	data->caps.ec_major = FIELD_GET(MSI_PLATFORM_EC_MAJOR_MASK, flags);
+	data->caps.ec_minor = FIELD_GET(MSI_PLATFORM_EC_MINOR_MASK, flags);
+	data->caps.is_tigerlake = flags & MSI_PLATFORM_EC_IS_TIGERLAKE;
+	data->caps.ec_valid = true;
+
 	if (!(flags & MSI_PLATFORM_EC_IS_TIGERLAKE)) {
 		if (!force)
 			return -ENODEV;
@@ -1455,6 +1484,10 @@ static int msi_wmi_platform_init(struct msi_wmi_platform_data *data)
 	dev_dbg(&data->wdev->dev, "WMI interface version %u.%u\n",
 		buffer[MSI_PLATFORM_WMI_MAJOR_OFFSET],
 		buffer[MSI_PLATFORM_WMI_MINOR_OFFSET]);
+
+	data->caps.wmi_major = buffer[MSI_PLATFORM_WMI_MAJOR_OFFSET];
+	data->caps.wmi_minor = buffer[MSI_PLATFORM_WMI_MINOR_OFFSET];
+	data->caps.wmi_valid = true;
 
 	if (buffer[MSI_PLATFORM_WMI_MAJOR_OFFSET] != MSI_WMI_PLATFORM_INTERFACE_VERSION) {
 		if (!force)
@@ -1481,9 +1514,6 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
 	return PTR_ERR_OR_ZERO(data->ppdev);
 }
 
-#define MSI_PLATFORM_ECID_ADDR	0xa0
-#define MSI_PLATFORM_ECID_LEN	4
-
 /* Read the 4-char EC firmware ID prefix and return a matching quirk, or NULL. */
 static struct msi_wmi_platform_quirk *
 msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
@@ -1502,11 +1532,37 @@ msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
 		id[i] = buffer[1];
 	}
 
+	strscpy(data->caps.ec_id, id, sizeof(data->caps.ec_id));
+
 	for (e = msi_ec_quirks; e->ec_id; e++)
 		if (!strncmp(id, e->ec_id, MSI_PLATFORM_ECID_LEN))
 			return e->quirk;
 
 	return NULL;
+}
+
+/*
+ * Cache the Get_Device(0x01) hardware-presence bitmap. Non-fatal. The bitmap
+ * advertises read-only presence features (per MSI Center: Data[1] bit1=webcam,
+ * bit4=panel-OD; Data[2] bit3=backlight, bit6=HSR). Packed little-endian into a
+ * u32 (Data[1]=bits 0-7, Data[2]=bits 8-15, ...). Raw bytes are logged for
+ * cross-referencing the decode on hardware.
+ */
+static void msi_wmi_platform_caps_probe(struct msi_wmi_platform_data *data)
+{
+	u8 buffer[32] = { MSI_PLATFORM_DEVICE_SUBFEATURE_PRESENCE };
+	int ret;
+
+	ret = msi_wmi_platform_query(data, MSI_PLATFORM_GET_DEVICE, buffer, sizeof(buffer));
+	if (ret < 0 || buffer[0] != 1)
+		return;
+
+	data->caps.device_bitmap = buffer[1] | (buffer[2] << 8) |
+				   (buffer[3] << 16) | (buffer[4] << 24);
+	data->caps.device_bitmap_valid = true;
+	dev_info(&data->wdev->dev,
+		 "Get_Device(0x01) presence bitmap: %02x %02x %02x %02x\n",
+		 buffer[1], buffer[2], buffer[3], buffer[4]);
 }
 
 static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
@@ -1553,6 +1609,8 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 	ret = msi_wmi_platform_ec_init(data);
 	if (ret < 0)
 		return ret;
+
+	msi_wmi_platform_caps_probe(data);
 
 	ret = msi_wmi_fw_attrs_init(data);
 	if (ret < 0)
