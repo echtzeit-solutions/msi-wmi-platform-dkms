@@ -12,8 +12,11 @@ fan-curve / platform_profile / charge series applied, **plus MS-16V5 additions**
 - **Capability/feature-based architecture** — a runtime capability cache (`Get_Device(0x01)`
   presence bitmap) + a `msi_features[]` descriptor table (detect/setup/suspend/resume per feature)
   driven by a two-pass probe, mirroring how MSI Center decides features. Control features
-  (profile/charge/fan-curves) are gated by a per-family allow-list (the `model` table); unknown
-  boards get read-only sensors only. See `../docs/msi-center-architecture.md`.
+  (profile/charge/fan-curves) are gated by `msi_control_supported()` — the same heuristic MSI
+  Center's `IsSupport()` uses (MSI vendor + notebook/convertible chassis + WMI v2 + Tigerlake EC
+  flag) — so control works generically on modern MSI notebooks with no per-model entry. The `model`
+  table only carries fan count / TDP limits + `force_control`/`deny_control` edge overrides. See
+  `../docs/msi-center-architecture.md`.
 
 ## Install (recommended: the repo installer)
 ```bash
@@ -22,9 +25,9 @@ sudo ../install.sh
 
 ## Manual DKMS
 ```bash
-sudo cp -r . /usr/src/msi-wmi-platform-dkms-0.5
-sudo dkms add    -m msi-wmi-platform-dkms -v 0.5
-sudo dkms install -m msi-wmi-platform-dkms -v 0.5 --force
+sudo cp -r . /usr/src/msi-wmi-platform-dkms-0.6
+sudo dkms add    -m msi-wmi-platform-dkms -v 0.6
+sudo dkms install -m msi-wmi-platform-dkms -v 0.6 --force
 sudo modprobe -r msi_wmi_platform && sudo modprobe msi_wmi_platform
 ```
 Installs to `updates/dkms/` (overrides the in-tree module), DKMS auto-signs with your MOK

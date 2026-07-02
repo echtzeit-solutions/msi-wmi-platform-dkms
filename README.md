@@ -4,10 +4,11 @@ Capability/feature-based Linux hardware support for MSI notebooks, built on the 
 **`msi-wmi-platform`** WMI driver: fan control, performance profiles, battery-charge limiting and a
 suspend/resume fix, plus keyboard-RGB and suspend setup notes.
 
-The driver detects features at runtime (like MSI Center) and gates model-specific control through a
-per-family table, so it extends to new boards by data rather than code. **Verified on** the MSI
-Stealth GS66 12UHS (board MS-16V5, EC `16V5EMS1.*` — e.g. 12UHS/12UGS/12UE); other MSI WMI-platform
-notebooks get read-only sensors until their control path is verified.
+The driver detects features at runtime (like MSI Center): presence via the `Get_Device` bitmap, and
+control (profile/charge/fan curves) via the same heuristic MSI Center uses — an MSI notebook/
+convertible with a modern (WMI v2, Tigerlake+) ABI — so it works **generically across modern MSI
+notebooks**, no per-model table required. **Verified on** the MSI Stealth GS66 12UHS (board MS-16V5,
+EC `16V5EMS1.*` — e.g. 12UHS/12UGS/12UE).
 
 ## What works
 

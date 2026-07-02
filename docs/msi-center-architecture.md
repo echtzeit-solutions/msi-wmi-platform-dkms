@@ -28,15 +28,20 @@ capability-based design. Companion data + tooling: `../msi-center-manifest/`.
 bitmap from EC/BIOS, re-read on each access. Decode (see `capability-map.md`): `Data[1]` bit1=WebCam,
 bit4=PanelOD; `Data[2]` bit3=Backlight, bit6=HSR.
 
-**Control features — offered generically** (fan / profile / charge / boost): in the package
-manifest these are `Support=null` (universal to all notebooks). MSI does **not** keep a per-model
-table for them; whether they work is decided by the EC firmware. There is **no per-model/family
-branch** in MSI's setters — e.g. `SetShiftModeValueInEC` is `Set_Data(0xD2, val)` with `val` built
-purely by bitmask math; the only branch is `WmiMajorVersion >= 2` vs. a legacy named-pipe fallback.
+**Control features** (fan / profile / charge / boost): the *package* is universal (`Support=null`),
+and the register access is uniform — `SetShiftModeValueInEC` is `Set_Data(0xD2, val)` with `val`
+built purely by bitmask math, no per-model branch, and the `0x80` "ability" bit is *written*, not
+read. But there is **no EC probe** for control support. Instead the feature module gates at runtime
+on `Features.IsSupport(cpuGeneration, MktName, EnclosureType, Manufacturer, …)` — a heuristic:
+**MSI manufacturer + chassis 0x0A/0x1F + Intel CPU-gen window + marketing-name allow/deny lists +
+NB.dat** (details in `capability-map.md`). So control is *not* purely runtime-probed — it's an
+SMBIOS/CPU-gen/model heuristic (the register layout is uniform; whether a given board *has* the
+feature is what IsSupport decides).
 
-→ **Driver consequence:** probe presence at runtime like MSI; offer control generically; keep a
-small **per-family allow-list** (by EC-ID) only as a *safety* gate for control features (default-off
-on unrecognized boards), plus register-convention fields *if* a future generation diverges.
+→ **Driver consequence:** probe presence at runtime like MSI; for control, mirror the *safe core*
+of IsSupport (`msi_control_supported()`: MSI vendor + notebook/convertible chassis + WMI v2 +
+Tigerlake EC flag), which enables control **generically across modern MSI notebooks** — no
+per-model table — with `force_control`/`deny_control` overrides for the edges (handhelds / known-bad).
 
 ## Confirmed WMI selectors (`Set_Data idx` = raw EC register)
 `0xD2` shift/profile · `0xD4` fan mode · `0x98` cooler boost · `0xDB` USB LED · `0xE8` Fn/Win ·

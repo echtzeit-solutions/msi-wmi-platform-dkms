@@ -47,9 +47,29 @@ from EC/BIOS (`Data[1..]`), re-checked on every property access. Decoded from
 | `Data[2]` bit6 | HSR panel | `EnableHSRpanel` |
 
 The driver mirrors this: cache the bitmap once in probe (`msi_wmi_platform_caps_probe`) and gate
-read-only *presence* features on it. **Control** features (fan/profile/charge) have **no**
-capability bit — MSI offers them generically and lets the EC firmware decide; the driver keeps a
-per-family allow-list for those instead (see `msi-center-architecture.md`).
+read-only *presence* features on it.
+
+## Control-feature gating — `Features.IsSupport()` (the definitive answer)
+**Control** features (Dynamic/Cooler/Battery/Boost = shift-mode/fan/charge/boost) have **no**
+runtime capability bit — the generic EC read/write always "succeeds", and the shift-mode `0x80`
+"ability" bit is *written* by the app (`InitiateShiftMode` just sets it true), never read back.
+So MSI Center does **not** probe the EC for control support. It gates on
+`MSIWMIACPI2.Features.IsSupport(cpuGeneration, MktName, EnclosureType, Manufacturer, …)`
+(`MSIWMIACPI2.decompiled.cs:1817`), a heuristic decision tree:
+
+1. Manufacturer ∈ {`Micro-Star International`, `MSI`, `MICRO-STAR`} (SMBIOS).
+2. SMBIOS chassis/EnclosureType ∈ {`0x0A` Notebook, `0x1F` Convertible}.
+3. Intel CPU generation within a supported window (this build: 10–12; `≥13` → "too new").
+4. Marketing-name allow/deny lists (hardcoded families + explicit denies for some Modern/Creator
+   thin-and-lights) + BIOS-version checks for a few models.
+5. `Data/NB.dat` — optional plaintext marketing-name whitelist that force-enables.
+
+**No EC probe anywhere for control.** The only EC/WMI-reported signals are `Get_WMI` version and
+the `Get_EC` "Tigerlake+" flag (bit7 of the flags byte) — necessary-but-not-sufficient ABI markers.
+
+Our driver mirrors the safe core of this (`msi_control_supported()`): MSI vendor + notebook/
+convertible chassis + WMI v2 + Tigerlake EC flag, with per-family `force_control`/`deny_control`
+overrides. This enables control generically on modern MSI notebooks without a per-model table.
 
 ## EC firmware confirmation (Ghidra, 8051, 447 fns in base bank)
 Strings confirm feature areas: thermal (`CPU_CrtT`,`CPU_ThtlT`,`SYS_CrtT`,`SYS_ThtlT`),
