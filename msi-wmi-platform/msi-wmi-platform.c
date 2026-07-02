@@ -129,8 +129,8 @@ enum msi_wmi_platform_method {
 
 struct msi_wmi_platform_model {
 	bool dual_fans;		/* two hwmon fans instead of four (physical fan count) */
-	bool force_control;	/* enable control even if the generic heuristic fails (e.g. handhelds) */
-	bool deny_control;	/* disable control even if the generic heuristic passes */
+	bool force_control;	/* enable control even where the heuristic fails (handhelds) */
+	bool deny_control;	/* disable control even where the heuristic passes */
 	int pl_min;		/* Minimum PLx value */
 	int pl1_max;		/* Maximum PL1 value */
 	int pl2_max;		/* Maximum PL2 value */
