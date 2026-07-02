@@ -1,5 +1,5 @@
 From 8034eed629dadbf0388c94c3ac2342c4ef76c2e5 Mon Sep 17 00:00:00 2001
-From: dev <dev@local>
+From: Florian Hänel <florian.haenel@echtzeit.solutions>
 Date: Wed, 1 Jul 2026 15:36:44 +0200
 Subject: [PATCH 2/3] platform/x86: msi-wmi-platform: restore state on firmware
  resume
@@ -14,7 +14,7 @@ Snapshot the fan state on suspend and, on resume via firmware only
 driving the fans manually, the CPU/GPU fan curve tables and the manual-mode
 flag. Gating on pm_resume_via_firmware() makes it a no-op on s2idle.
 
-Signed-off-by: Florian <heeen.de@gmail.com>
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
 Assisted-by: Claude:claude-opus-4-8
 ---
  drivers/platform/x86/msi-wmi-platform.c | 97 ++++++++++++++++++++++++-

@@ -1,5 +1,5 @@
 From 522212d7ea69500493d1ed640c562c7372d65a7b Mon Sep 17 00:00:00 2001
-From: dev <dev@local>
+From: Florian Hänel <florian.haenel@echtzeit.solutions>
 Date: Wed, 1 Jul 2026 16:12:44 +0200
 Subject: [PATCH 3/3] platform/x86: msi-wmi-platform: match quirks by EC
  firmware ID
@@ -11,7 +11,7 @@ Match quirks by the 4-character EC firmware ID prefix (read from EC RAM
 whole board family is covered by one entry. The EC-ID match takes
 precedence and falls back to the DMI table when the EC ID is unknown.
 
-Signed-off-by: Florian <heeen.de@gmail.com>
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
 Assisted-by: Claude:claude-opus-4-8
 ---
  drivers/platform/x86/msi-wmi-platform.c | 51 +++++++++++++++++++++++++
