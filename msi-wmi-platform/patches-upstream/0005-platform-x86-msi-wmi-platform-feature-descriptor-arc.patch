@@ -1,0 +1,434 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Fri, 3 Jul 2026 13:36:03 +0200
+Subject: [PATCH 5/8] platform/x86: msi-wmi-platform: feature-descriptor
+ architecture + two-pass probe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace the scattered per-quirk `if (quirks->x)` gating with a feature
+descriptor table (msi_features[]) whose entries carry detect/setup/remove/
+suspend/resume callbacks, driven by a two-pass probe: detect all features (set
+the per-instance `features` bitmap), then set up the enabled ones. Two passes
+let a feature's setup observe another's enabled state.
+
+- msi_wmi_platform_model_allows() maps each control feature to its per-family
+  allow condition (the quirk table stays the family "manifest", keyed by
+  EC-ID/DMI). Control features (profile/charge/fan-curves) have no runtime
+  capability bit, so they are permitted only on verified boards.
+- is_visible() now gates hwmon pwm control on MSI_FEAT_FAN_CURVES, and
+  hwmon_init() passes the auto-point curve attribute groups only when enabled.
+  Net effect: unrecognized boards get read-only sensors, nothing that drives the
+  EC (previously pwm control leaked onto every board that bound).
+- remove()/suspend()/resume() become generic iterators over the feature table;
+  resume keeps the pm_resume_via_firmware() short-circuit. Behavior on MS-16V5
+  is unchanged (verified: identical hwmon/pwm/profile/charge sysfs, clean probe,
+  no setup failures).
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 308 +++++++++++++++++++-----
+ 1 file changed, 242 insertions(+), 66 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 6fa31907d4e8..fa3e792f8d92 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -144,6 +144,20 @@ struct msi_wmi_platform_factory_curves {
+ 	u8 gpu_temp_table[32];
+ };
+ 
++/*
++ * Feature IDs. Each is independently detected (runtime capability + per-family
++ * allow-list) and set up via the msi_features[] descriptor table. Order also
++ * defines remove()/suspend()/resume() iteration order (profile before fan
++ * curves on resume, matching the pre-refactor behavior).
++ */
++enum msi_feature_id {
++	MSI_FEAT_HWMON,		/* fan/temp sensors; pwm control only if FAN_CURVES */
++	MSI_FEAT_PROFILE,	/* platform_profile (shift mode) */
++	MSI_FEAT_CHARGE,	/* charge_control_end_threshold */
++	MSI_FEAT_FAN_CURVES,	/* pwm_enable + auto_point curve tables + restore */
++	MSI_FEAT_COUNT
++};
++
+ /*
+  * Runtime capability cache, probed once at ->probe(). Mirrors how MSI Center
+  * decides features: interface/EC versions gate the ABI, and the Get_Device(0x01)
+@@ -175,8 +189,39 @@ struct msi_wmi_platform_data {
+ 	u8 fan_table_cpu[32];
+ 	u8 fan_table_gpu[32];
+ 	bool fan_tables_enabled;
++	DECLARE_BITMAP(features, MSI_FEAT_COUNT);	/* enabled features (msi_feature_id) */
+ };
+ 
++static inline bool msi_feature_enabled(const struct msi_wmi_platform_data *data,
++				       enum msi_feature_id id)
++{
++	return test_bit(id, data->features);
++}
++
++/*
++ * Per-family control allow-list. Control features (profile/charge/fan-curves)
++ * have no runtime capability bit -- the generic EC read/write always succeeds --
++ * so, like MSI Center's model manifest, they are permitted only on verified
++ * boards (via the quirk table, keyed by EC-ID/DMI). Unknown boards get read-only
++ * sensors, nothing that drives the EC.
++ */
++static bool msi_wmi_platform_model_allows(struct msi_wmi_platform_data *data,
++					  enum msi_feature_id id)
++{
++	const struct msi_wmi_platform_quirk *q = data->quirks;
++
++	switch (id) {
++	case MSI_FEAT_PROFILE:
++		return q->shift_mode;
++	case MSI_FEAT_CHARGE:
++		return q->charge_threshold;
++	case MSI_FEAT_FAN_CURVES:
++		return q->restore_curves;
++	default:
++		return false;
++	}
++}
++
+ enum msi_fw_attr_id {
+ 	MSI_ATTR_PPT_PL1_SPL,
+ 	MSI_ATTR_PPT_PL2_SPPT,
+@@ -668,8 +713,11 @@ static int msi_wmi_platform_curves_load(struct msi_wmi_platform_data *data)
+ static umode_t msi_wmi_platform_is_visible(const void *drvdata, enum hwmon_sensor_types type,
+ 					   u32 attr, int channel)
+ {
++	const struct msi_wmi_platform_data *data = drvdata;
++
++	/* Fan (pwm) control is exposed only on boards where it is validated. */
+ 	if (type == hwmon_pwm && attr == hwmon_pwm_enable)
+-		return 0644;
++		return msi_feature_enabled(data, MSI_FEAT_FAN_CURVES) ? 0644 : 0;
+ 
+ 	return 0444;
+ }
+@@ -1428,13 +1476,18 @@ static void msi_wmi_platform_debugfs_init(struct msi_wmi_platform_data *data)
+ 
+ static int msi_wmi_platform_hwmon_init(struct msi_wmi_platform_data *data)
+ {
++	const struct attribute_group **groups = NULL;
+ 	struct device *hdev;
+ 
++	/* Expose the pwm auto-point curve attributes only with fan control. */
++	if (msi_feature_enabled(data, MSI_FEAT_FAN_CURVES))
++		groups = msi_wmi_platform_hwmon_groups;
++
+ 	hdev = devm_hwmon_device_register_with_info(
+ 		&data->wdev->dev, "msi_wmi_platform", data,
+ 		data->quirks->dual_fans ? &msi_wmi_platform_chip_info_dual :
+ 					&msi_wmi_platform_chip_info,
+-		msi_wmi_platform_hwmon_groups);
++		groups);
+ 
+ 	return PTR_ERR_OR_ZERO(hdev);
+ }
+@@ -1565,11 +1618,159 @@ static void msi_wmi_platform_caps_probe(struct msi_wmi_platform_data *data)
+ 		 buffer[1], buffer[2], buffer[3], buffer[4]);
+ }
+ 
++/* ---- feature descriptors ------------------------------------------------- */
++
++static int msi_feat_hwmon_detect(struct msi_wmi_platform_data *data)
++{
++	return 1;	/* fan/temp sensors are always attempted */
++}
++
++static int msi_feat_profile_detect(struct msi_wmi_platform_data *data)
++{
++	return msi_wmi_platform_model_allows(data, MSI_FEAT_PROFILE);
++}
++
++static int msi_feat_profile_setup(struct msi_wmi_platform_data *data)
++{
++	int ret = msi_wmi_platform_profile_setup(data);
++
++	if (ret < 0)
++		return ret;
++	/* Seed the cached profile from current EC state for resume re-apply. */
++	msi_wmi_platform_profile_get(&data->wdev->dev, &data->cur_profile);
++	return 0;
++}
++
++static int msi_feat_profile_resume(struct msi_wmi_platform_data *data)
++{
++	msi_wmi_platform_profile_apply(data, data->cur_profile);
++	return 0;
++}
++
++static int msi_feat_charge_detect(struct msi_wmi_platform_data *data)
++{
++	return msi_wmi_platform_model_allows(data, MSI_FEAT_CHARGE);
++}
++
++static int msi_feat_charge_setup(struct msi_wmi_platform_data *data)
++{
++	data->battery_hook.name = "MSI Battery";
++	data->battery_hook.add_battery = msi_wmi_platform_battery_add;
++	data->battery_hook.remove_battery = msi_wmi_platform_battery_remove;
++	battery_hook_register(&data->battery_hook);
++	return 0;
++}
++
++static void msi_feat_charge_remove(struct msi_wmi_platform_data *data)
++{
++	battery_hook_unregister(&data->battery_hook);
++}
++
++static int msi_feat_fan_curves_detect(struct msi_wmi_platform_data *data)
++{
++	return msi_wmi_platform_model_allows(data, MSI_FEAT_FAN_CURVES);
++}
++
++static int msi_feat_fan_curves_setup(struct msi_wmi_platform_data *data)
++{
++	guard(mutex)(&data->wmi_lock);
++	return msi_wmi_platform_curves_save(data);
++}
++
++static void msi_feat_fan_curves_remove(struct msi_wmi_platform_data *data)
++{
++	guard(mutex)(&data->wmi_lock);
++	msi_wmi_platform_curves_load(data);
++}
++
++/*
++ * Snapshot the fan state before suspend. Deep S3 / hibernate reset the EC's fan
++ * mode and curve tables (s2idle keeps them); cache what to restore on resume.
++ */
++static int msi_feat_fan_curves_suspend(struct msi_wmi_platform_data *data)
++{
++	u8 buffer[32] = { MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE };
++
++	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)))
++		data->fan_tables_enabled = buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] &
++					   MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
++
++	data->fan_table_cpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
++	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_cpu,
++			       sizeof(data->fan_table_cpu));
++	data->fan_table_gpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
++	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_gpu,
++			       sizeof(data->fan_table_gpu));
++	return 0;
++}
++
++static int msi_feat_fan_curves_resume(struct msi_wmi_platform_data *data)
++{
++	u8 buffer[32];
++
++	if (!data->fan_tables_enabled)
++		return 0;
++
++	memcpy(buffer, data->fan_table_cpu, sizeof(buffer));
++	buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
++	msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
++
++	memcpy(buffer, data->fan_table_gpu, sizeof(buffer));
++	buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
++	msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
++
++	buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
++	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer))) {
++		buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
++		buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] |= MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
++		msi_wmi_platform_query(data, MSI_PLATFORM_SET_AP, buffer, sizeof(buffer));
++	}
++	return 0;
++}
++
++struct msi_wmi_platform_feature {
++	const char *name;
++	int  (*detect)(struct msi_wmi_platform_data *data);	/* >0 enable, 0 skip, <0 fatal */
++	int  (*setup)(struct msi_wmi_platform_data *data);
++	void (*remove)(struct msi_wmi_platform_data *data);	/* non-devm teardown (optional) */
++	int  (*suspend)(struct msi_wmi_platform_data *data);	/* optional */
++	int  (*resume)(struct msi_wmi_platform_data *data);	/* optional */
++};
++
++static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
++	[MSI_FEAT_HWMON] = {
++		.name = "hwmon",
++		.detect = msi_feat_hwmon_detect,
++		.setup = msi_wmi_platform_hwmon_init,
++	},
++	[MSI_FEAT_PROFILE] = {
++		.name = "platform-profile",
++		.detect = msi_feat_profile_detect,
++		.setup = msi_feat_profile_setup,
++		.resume = msi_feat_profile_resume,
++	},
++	[MSI_FEAT_CHARGE] = {
++		.name = "charge-threshold",
++		.detect = msi_feat_charge_detect,
++		.setup = msi_feat_charge_setup,
++		.remove = msi_feat_charge_remove,
++	},
++	[MSI_FEAT_FAN_CURVES] = {
++		.name = "fan-curves",
++		.detect = msi_feat_fan_curves_detect,
++		.setup = msi_feat_fan_curves_setup,
++		.remove = msi_feat_fan_curves_remove,
++		.suspend = msi_feat_fan_curves_suspend,
++		.resume = msi_feat_fan_curves_resume,
++	},
++};
++
+ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ {
+ 	struct msi_wmi_platform_data *data;
+ 	struct msi_wmi_platform_quirk *quirk;
+ 	const struct dmi_system_id *dmi_id;
++	unsigned int fid;
+ 	int ret;
+ 
+ 	data = devm_kzalloc(&wdev->dev, sizeof(*data), GFP_KERNEL);
+@@ -1616,102 +1817,77 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (data->quirks->charge_threshold) {
+-		data->battery_hook.name = "MSI Battery";
+-		data->battery_hook.add_battery = msi_wmi_platform_battery_add;
+-		data->battery_hook.remove_battery = msi_wmi_platform_battery_remove;
+-		battery_hook_register(&data->battery_hook);
+-	}
+-
+ 	msi_wmi_platform_debugfs_init(data);
+ 
+-	msi_wmi_platform_profile_setup(data);
+-
+-	/* Seed cached profile from the current EC state for resume re-apply. */
+-	if (data->quirks->shift_mode)
+-		msi_wmi_platform_profile_get(&wdev->dev, &data->cur_profile);
+-
+-	if (data->quirks->restore_curves) {
+-		guard(mutex)(&data->wmi_lock);
+-		ret = msi_wmi_platform_curves_save(data);
++	/*
++	 * Feature layer: detect all features, then set up the enabled ones. Two
++	 * passes so a feature's setup can observe another's enabled state (e.g.
++	 * hwmon exposes pwm control only when fan-curves is enabled). A setup
++	 * failure is non-fatal: clear the bit, run its teardown, keep going.
++	 */
++	for (fid = 0; fid < MSI_FEAT_COUNT; fid++) {
++		ret = msi_features[fid].detect(data);
+ 		if (ret < 0)
+ 			return ret;
++		if (ret > 0)
++			__set_bit(fid, data->features);
++	}
++
++	for_each_set_bit(fid, data->features, MSI_FEAT_COUNT) {
++		if (!msi_features[fid].setup)
++			continue;
++		ret = msi_features[fid].setup(data);
++		if (ret < 0) {
++			dev_warn(&wdev->dev, "feature %s setup failed: %d\n",
++				 msi_features[fid].name, ret);
++			__clear_bit(fid, data->features);
++			if (msi_features[fid].remove)
++				msi_features[fid].remove(data);
++		}
+ 	}
+ 
+-	return msi_wmi_platform_hwmon_init(data);
++	return 0;
+ }
+ 
+ static void msi_wmi_platform_remove(struct wmi_device *wdev)
+ {
+ 	struct msi_wmi_platform_data *data = dev_get_drvdata(&wdev->dev);
++	unsigned int fid;
+ 
+-	if (data->quirks->charge_threshold)
+-		battery_hook_unregister(&data->battery_hook);
+-
+-	if (data->quirks->restore_curves) {
+-		guard(mutex)(&data->wmi_lock);
+-		msi_wmi_platform_curves_load(data);
+-	}
++	for_each_set_bit(fid, data->features, MSI_FEAT_COUNT)
++		if (msi_features[fid].remove)
++			msi_features[fid].remove(data);
+ }
+ 
+-/*
+- * Snapshot the fan state before suspend. On a firmware-based resume (deep S3 or
+- * hibernate) the EC resets shift-mode (platform_profile), the fan mode and the
+- * fan curve tables to their defaults; s2idle keeps them. Cache what to restore.
+- */
+ static int msi_wmi_platform_suspend(struct device *dev)
+ {
+ 	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+-	u8 buffer[32] = { MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE };
+-
+-	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)))
+-		data->fan_tables_enabled = buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] &
+-					   MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
++	unsigned int fid;
+ 
+-	data->fan_table_cpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
+-	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_cpu,
+-			       sizeof(data->fan_table_cpu));
+-	data->fan_table_gpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
+-	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_gpu,
+-			       sizeof(data->fan_table_gpu));
++	for_each_set_bit(fid, data->features, MSI_FEAT_COUNT)
++		if (msi_features[fid].suspend)
++			msi_features[fid].suspend(data);
+ 
+ 	return 0;
+ }
+ 
+ /*
+  * Firmware resume (deep S3 / hibernate) resets the EC's live control state, so
+- * re-apply platform_profile and, if the user was driving the fans manually, the
+- * fan curve tables and the manual-mode flag. s2idle keeps everything -> skip.
+- * (Verified on MS-16V5: deep S3 resets 0xD2, 0xD4 and the 0x71.. / 0x82.. curve
+- * tables; s2idle resets nothing.)
++ * each feature re-applies what it owns (platform_profile, fan curves/mode).
++ * s2idle keeps everything powered -> nothing to do. (Verified on MS-16V5: deep
++ * S3 resets 0xD2, 0xD4 and the fan curve tables; s2idle resets nothing.)
+  */
+ static int msi_wmi_platform_resume(struct device *dev)
+ {
+ 	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+-	u8 buffer[32];
++	unsigned int fid;
+ 
+ 	if (!pm_resume_via_firmware())
+ 		return 0;
+ 
+-	if (data->quirks->shift_mode)
+-		msi_wmi_platform_profile_apply(data, data->cur_profile);
+-
+-	if (data->fan_tables_enabled) {
+-		memcpy(buffer, data->fan_table_cpu, sizeof(buffer));
+-		buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
+-		msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
+-
+-		memcpy(buffer, data->fan_table_gpu, sizeof(buffer));
+-		buffer[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
+-		msi_wmi_platform_query(data, MSI_PLATFORM_SET_FAN, buffer, sizeof(buffer));
+-
+-		buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
+-		if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer))) {
+-			buffer[0] = MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE;
+-			buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] |= MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
+-			msi_wmi_platform_query(data, MSI_PLATFORM_SET_AP, buffer, sizeof(buffer));
+-		}
+-	}
++	for_each_set_bit(fid, data->features, MSI_FEAT_COUNT)
++		if (msi_features[fid].resume)
++			msi_features[fid].resume(data);
+ 
+ 	return 0;
+ }

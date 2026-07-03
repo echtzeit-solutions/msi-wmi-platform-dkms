@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Fri, 3 Jul 2026 13:36:03 +0200
+Subject: [PATCH 7/8] platform/x86: msi-wmi-platform: gate control by a runtime
+ heuristic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Control features (platform_profile, charge threshold, fan curves) have no
+runtime capability bit -- the generic EC read/write always "succeeds". Rather
+than a per-model allow-list, enable them the way MSI Center's own
+Features.IsSupport() decides: an MSI notebook/convertible (DMI vendor
+"Micro-Star", chassis type 0x0A/0x1F) with a modern ABI (WMI interface v2,
+Tigerlake+ EC flag). This makes control generic across modern MSI notebooks --
+MS-16V5 and its siblings qualify with no special entry.
+
+The per-family model table now only carries hardware facts that can't be probed
+(fan count, TDP PL limits) plus optional force_control (boards the notebook
+heuristic misses, e.g. the Claw handhelds) / deny_control overrides.
+
+Verified on MS-16V5: control (profile/charge/pwm curves) enabled purely by the
+heuristic; identical sysfs to the per-model build.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 89 ++++++++++++++-----------
+ 1 file changed, 51 insertions(+), 38 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 479f659fc68e..0e2e05ec2885 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -128,10 +128,9 @@ enum msi_wmi_platform_method {
+ };
+ 
+ struct msi_wmi_platform_model {
+-	bool shift_mode;	/* Shift mode is supported */
+-	bool charge_threshold;	/* Charge threshold is supported */
+-	bool dual_fans;		/* For devices with two hwmon fans */
+-	bool restore_curves;	/* Restore factory curves on unload */
++	bool dual_fans;		/* two hwmon fans instead of four (physical fan count) */
++	bool force_control;	/* enable control even if the generic heuristic fails (e.g. handhelds) */
++	bool deny_control;	/* disable control even if the generic heuristic passes */
+ 	int pl_min;		/* Minimum PLx value */
+ 	int pl1_max;		/* Maximum PL1 value */
+ 	int pl2_max;		/* Maximum PL2 value */
+@@ -199,27 +198,41 @@ static inline bool msi_feature_enabled(const struct msi_wmi_platform_data *data,
+ }
+ 
+ /*
+- * Per-family control allow-list. Control features (profile/charge/fan-curves)
+- * have no runtime capability bit -- the generic EC read/write always succeeds --
+- * so, like MSI Center's model manifest, they are permitted only on verified
+- * boards (via the per-family model table, keyed by EC-ID/DMI). Unknown boards get read-only
+- * sensors, nothing that drives the EC.
++ * Decide whether the control features (platform_profile, charge threshold, fan
++ * curves) may be enabled. They have no runtime capability bit -- the generic EC
++ * read/write always "succeeds" even on hardware that doesn't implement them --
++ * so we gate them the same way MSI Center's own Features.IsSupport() does: an
++ * MSI notebook/convertible with a modern (interface v2, Tigerlake+ EC) ABI.
++ * This covers modern MSI notebooks generically, without a per-model table. A
++ * per-family entry may still force-enable it (boards the heuristic misses, e.g.
++ * handhelds) or deny it (known-incompatible models).
+  */
+-static bool msi_wmi_platform_model_allows(struct msi_wmi_platform_data *data,
+-					  enum msi_feature_id id)
++static bool msi_control_supported(struct msi_wmi_platform_data *data)
+ {
+-	const struct msi_wmi_platform_model *q = data->model;
++	const char *vendor, *chassis;
++	unsigned long chassis_type;
+ 
+-	switch (id) {
+-	case MSI_FEAT_PROFILE:
+-		return q->shift_mode;
+-	case MSI_FEAT_CHARGE:
+-		return q->charge_threshold;
+-	case MSI_FEAT_FAN_CURVES:
+-		return q->restore_curves;
+-	default:
++	if (data->model->deny_control)
+ 		return false;
+-	}
++	if (data->model->force_control)
++		return true;
++
++	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
++	if (!vendor || !strstr(vendor, "Micro-Star"))
++		return false;
++
++	/* SMBIOS chassis type: 0x0A Notebook or 0x1F Convertible (as MSI checks). */
++	chassis = dmi_get_system_info(DMI_CHASSIS_TYPE);
++	if (!chassis || kstrtoul(chassis, 10, &chassis_type))
++		return false;
++	if (chassis_type != 0x0a && chassis_type != 0x1f)
++		return false;
++
++	if (!data->caps.wmi_valid ||
++	    data->caps.wmi_major < MSI_WMI_PLATFORM_INTERFACE_VERSION)
++		return false;
++
++	return data->caps.is_tigerlake;
+ }
+ 
+ enum msi_fw_attr_id {
+@@ -299,34 +312,34 @@ static const char * const msi_wmi_platform_debugfs_names[] = {
+ };
+ 
+ static struct msi_wmi_platform_model model_default = {};
++/*
++ * MSI Claw handhelds (MS-1T41/1T42/1T52). force_control: the generic notebook
++ * heuristic (chassis 0x0A/0x1F) does not match a handheld chassis, but control
++ * is known-good here. TDP limits are board-specific.
++ */
+ static struct msi_wmi_platform_model model_gen1 = {
+-	.shift_mode = true,
+-	.charge_threshold = true,
+ 	.dual_fans = true,
+-	.restore_curves = true,
++	.force_control = true,
+ 	.pl_min = 8,
+ 	.pl1_max = 43,
+ 	.pl2_max = 45
+ };
+ static struct msi_wmi_platform_model model_gen2 = {
+-	.shift_mode = true,
+-	.charge_threshold = true,
+ 	.dual_fans = true,
+-	.restore_curves = true,
++	.force_control = true,
+ 	.pl_min = 8,
+ 	.pl1_max = 30,
+ 	.pl2_max = 37
+ };
+ /*
+- * MSI Stealth GS66 12UHS and MS-16V5 siblings (EC 16V5EMS1.*).
+- * shift-mode/charge/dual-fan/curve-restore verified on 12UHS (EC 16V5EMS1.108).
+- * TDP (PLx) left unset: no validated PL1/PL2 limits for this board yet.
++ * MSI Stealth GS66 12UHS and MS-16V5 siblings (EC 16V5EMS1.*). Only the fan
++ * count is a per-board fact now; control (profile/charge/fan curves) is enabled
++ * generically by msi_control_supported() -- this notebook satisfies it, so no
++ * force_control is needed (verified on 12UHS, EC 16V5EMS1.108). TDP left unset:
++ * no validated PL1/PL2 limits for this board yet.
+  */
+ static struct msi_wmi_platform_model model_16v5 = {
+-	.shift_mode = true,
+-	.charge_threshold = true,
+ 	.dual_fans = true,
+-	.restore_curves = true,
+ };
+ 
+ static const struct dmi_system_id msi_models[] = {
+@@ -815,7 +828,7 @@ static int msi_wmi_platform_write(struct device *dev, enum hwmon_sensor_types ty
+ 			if (ret < 0)
+ 				return ret;
+ 
+-			if (val == 2 && data->model->restore_curves) {
++			if (val == 2 && msi_feature_enabled(data, MSI_FEAT_FAN_CURVES)) {
+ 				ret = msi_wmi_platform_curves_load(data);
+ 				if (ret < 0)
+ 					return ret;
+@@ -1557,7 +1570,7 @@ static int msi_wmi_platform_init(struct msi_wmi_platform_data *data)
+ 
+ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+ {
+-	if (!data->model->shift_mode)
++	if (!msi_feature_enabled(data, MSI_FEAT_PROFILE))
+ 		return 0;
+ 
+ 	data->ppdev = devm_platform_profile_register(
+@@ -1627,7 +1640,7 @@ static int msi_feat_hwmon_detect(struct msi_wmi_platform_data *data)
+ 
+ static int msi_feat_profile_detect(struct msi_wmi_platform_data *data)
+ {
+-	return msi_wmi_platform_model_allows(data, MSI_FEAT_PROFILE);
++	return msi_control_supported(data);
+ }
+ 
+ static int msi_feat_profile_setup(struct msi_wmi_platform_data *data)
+@@ -1649,7 +1662,7 @@ static int msi_feat_profile_resume(struct msi_wmi_platform_data *data)
+ 
+ static int msi_feat_charge_detect(struct msi_wmi_platform_data *data)
+ {
+-	return msi_wmi_platform_model_allows(data, MSI_FEAT_CHARGE);
++	return msi_control_supported(data);
+ }
+ 
+ static int msi_feat_charge_setup(struct msi_wmi_platform_data *data)
+@@ -1668,7 +1681,7 @@ static void msi_feat_charge_remove(struct msi_wmi_platform_data *data)
+ 
+ static int msi_feat_fan_curves_detect(struct msi_wmi_platform_data *data)
+ {
+-	return msi_wmi_platform_model_allows(data, MSI_FEAT_FAN_CURVES);
++	return msi_control_supported(data);
+ }
+ 
+ static int msi_feat_fan_curves_setup(struct msi_wmi_platform_data *data)

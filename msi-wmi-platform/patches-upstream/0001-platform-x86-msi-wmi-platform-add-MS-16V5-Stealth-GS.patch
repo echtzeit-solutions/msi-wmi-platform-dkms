@@ -1,0 +1,223 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Fri, 3 Jul 2026 13:36:03 +0200
+Subject: [PATCH 1/8] platform/x86: msi-wmi-platform: add MS-16V5 (Stealth GS66
+ 12Ux) quirk
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a quirk entry for the MSI Stealth GS66 12Ux family (board MS-16V5,
+EC 16V5EMS1.*): shift-mode platform profile, charge threshold, dual fans and
+fan-curve restore, matched by DMI board name. Verified on a 12UHS
+(EC 16V5EMS1.108). TDP (PLx) left unset -- no validated PL1/PL2 limits for this
+board yet. Also adds a cur_profile field used by the resume path added next.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 115 +++++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index dfb65ac8fbf6..c79d4a60a7f8 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -145,6 +145,7 @@ struct msi_wmi_platform_data {
+ 	struct acpi_battery_hook battery_hook;
+ 	struct device *fw_attrs_dev;
+ 	struct kset *fw_attrs_kset;
++	enum platform_profile_option cur_profile;	/* last-set profile, re-applied on resume */
+ };
+ 
+ enum msi_fw_attr_id {
+@@ -242,8 +243,27 @@ static struct msi_wmi_platform_quirk quirk_gen2 = {
+ 	.pl1_max = 30,
+ 	.pl2_max = 37
+ };
++/*
++ * MSI Stealth GS66 12UHS and MS-16V5 siblings (EC 16V5EMS1.*).
++ * shift-mode/charge/dual-fan/curve-restore verified on 12UHS (EC 16V5EMS1.108).
++ * TDP (PLx) left unset: no validated PL1/PL2 limits for this board yet.
++ */
++static struct msi_wmi_platform_quirk quirk_16v5 = {
++	.shift_mode = true,
++	.charge_threshold = true,
++	.dual_fans = true,
++	.restore_curves = true,
++};
+ 
+ static const struct dmi_system_id msi_quirks[] = {
++	{
++		.ident = "MSI Stealth GS66 12Ux (MS-16V5)",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International Co., Ltd."),
++			DMI_MATCH(DMI_BOARD_NAME, "MS-16V5"),
++		},
++		.driver_data = &quirk_16v5,
++	},
+ 	{
+ 		.ident = "MSI Claw (gen 1)",
+ 		.matches = {
+@@ -270,6 +290,16 @@ static const struct dmi_system_id msi_quirks[] = {
+ 	},
+ };
+ 
++/* Match by EC firmware ID prefix (EC RAM 0xA0.., e.g. "16V5EMS1" -> "16V5"). */
++struct msi_wmi_platform_ec_quirk {
++	const char *ec_id;
++	struct msi_wmi_platform_quirk *quirk;
++};
++static const struct msi_wmi_platform_ec_quirk msi_ec_quirks[] = {
++	{ "16V5", &quirk_16v5 },	/* Stealth GS66 12Ux and MS-16V5 siblings */
++	{ }
++};
++
+ static int msi_wmi_platform_parse_buffer(union acpi_object *obj, u8 *output, size_t length)
+ {
+ 	if (obj->type != ACPI_TYPE_BUFFER)
+@@ -812,10 +842,9 @@ static int msi_wmi_platform_profile_get(struct device *dev,
+ 	}
+ }
+ 
+-static int msi_wmi_platform_profile_set(struct device *dev,
+-					enum platform_profile_option profile)
++static int msi_wmi_platform_profile_apply(struct msi_wmi_platform_data *data,
++					  enum platform_profile_option profile)
+ {
+-	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+ 	u8 buffer[32] = { };
+ 
+ 	buffer[0] = MSI_PLATFORM_SHIFT_ADDR;
+@@ -843,6 +872,21 @@ static int msi_wmi_platform_profile_set(struct device *dev,
+ 	return msi_wmi_platform_query(data, MSI_PLATFORM_SET_DATA, buffer, sizeof(buffer));
+ }
+ 
++static int msi_wmi_platform_profile_set(struct device *dev,
++					enum platform_profile_option profile)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++	int ret;
++
++	ret = msi_wmi_platform_profile_apply(data, profile);
++	if (ret < 0)
++		return ret;
++
++	/* Cache so we can re-apply after suspend (the EC resets shift mode on resume). */
++	data->cur_profile = profile;
++	return 0;
++}
++
+ static const struct platform_profile_ops msi_wmi_platform_profile_ops = {
+ 	.probe = msi_wmi_platform_profile_probe,
+ 	.profile_get = msi_wmi_platform_profile_get,
+@@ -1436,9 +1480,38 @@ static int msi_wmi_platform_profile_setup(struct msi_wmi_platform_data *data)
+ 	return PTR_ERR_OR_ZERO(data->ppdev);
+ }
+ 
++#define MSI_PLATFORM_ECID_ADDR	0xa0
++#define MSI_PLATFORM_ECID_LEN	4
++
++/* Read the 4-char EC firmware ID prefix and return a matching quirk, or NULL. */
++static struct msi_wmi_platform_quirk *
++msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
++{
++	const struct msi_wmi_platform_ec_quirk *e;
++	char id[MSI_PLATFORM_ECID_LEN + 1] = { };
++	u8 buffer[32];
++	int i, ret;
++
++	for (i = 0; i < MSI_PLATFORM_ECID_LEN; i++) {
++		memset(buffer, 0, sizeof(buffer));
++		buffer[0] = MSI_PLATFORM_ECID_ADDR + i;
++		ret = msi_wmi_platform_query(data, MSI_PLATFORM_GET_DATA, buffer, sizeof(buffer));
++		if (ret < 0 || buffer[0] != 1)
++			return NULL;
++		id[i] = buffer[1];
++	}
++
++	for (e = msi_ec_quirks; e->ec_id; e++)
++		if (!strncmp(id, e->ec_id, MSI_PLATFORM_ECID_LEN))
++			return e->quirk;
++
++	return NULL;
++}
++
+ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ {
+ 	struct msi_wmi_platform_data *data;
++	struct msi_wmi_platform_quirk *quirk;
+ 	const struct dmi_system_id *dmi_id;
+ 	int ret;
+ 
+@@ -1447,6 +1520,7 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 		return -ENOMEM;
+ 
+ 	data->wdev = wdev;
++	data->cur_profile = PLATFORM_PROFILE_BALANCED;
+ 	dev_set_drvdata(&wdev->dev, data);
+ 
+ 	dmi_id = dmi_first_match(msi_quirks);
+@@ -1463,6 +1537,18 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/*
++	 * Prefer EC-firmware-ID matching (4-char prefix, e.g. "16V5") over the DMI
++	 * board name: one EC family covers many marketing SKUs (12UHS/UGS/UE/...).
++	 * Falls back to the DMI match set above if the EC ID is unknown.
++	 */
++	quirk = msi_wmi_platform_match_ec_id(data);
++	if (quirk)
++		data->quirks = quirk;
++
++	dev_info(&wdev->dev, "quirks matched via %s\n",
++		 quirk ? "EC firmware ID" : dmi_id ? "DMI board name" : "default (none)");
++
+ 	ret = msi_wmi_platform_ec_init(data);
+ 	if (ret < 0)
+ 		return ret;
+@@ -1482,6 +1568,10 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+ 
+ 	msi_wmi_platform_profile_setup(data);
+ 
++	/* Seed cached profile from the current EC state for resume re-apply. */
++	if (data->quirks->shift_mode)
++		msi_wmi_platform_profile_get(&wdev->dev, &data->cur_profile);
++
+ 	if (data->quirks->restore_curves) {
+ 		guard(mutex)(&data->wmi_lock);
+ 		ret = msi_wmi_platform_curves_save(data);
+@@ -1505,6 +1595,24 @@ static void msi_wmi_platform_remove(struct wmi_device *wdev)
+ 	}
+ }
+ 
++/*
++ * The EC resets shift mode (platform_profile) to its default across suspend/resume
++ * (verified on MS-16V5: 0xD2 performance->balanced; the firmware _WAK does not
++ * restore it). Re-apply the last-selected profile on resume.
++ */
++static int msi_wmi_platform_resume(struct device *dev)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++
++	if (!data->quirks->shift_mode)
++		return 0;
++
++	return msi_wmi_platform_profile_apply(data, data->cur_profile);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(msi_wmi_platform_pm_ops, NULL,
++				msi_wmi_platform_resume);
++
+ static const struct wmi_device_id msi_wmi_platform_id_table[] = {
+ 	{ MSI_PLATFORM_GUID, NULL },
+ 	{ }
+@@ -1515,6 +1623,7 @@ static struct wmi_driver msi_wmi_platform_driver = {
+ 	.driver = {
+ 		.name = DRIVER_NAME,
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++		.pm = pm_sleep_ptr(&msi_wmi_platform_pm_ops),
+ 	},
+ 	.id_table = msi_wmi_platform_id_table,
+ 	.probe = msi_wmi_platform_probe,

@@ -43,9 +43,22 @@ pulled in as a dependency automatically.
 - **Battery:** `echo 80 | sudo tee /sys/class/power_supply/BAT1/charge_control_end_threshold`
   (10–100%; hardware resumes charging below end−10%).
 
-## Upstream
-`patches-upstream/` holds the MS-16V5 patches as drafts (needs rebasing onto the current
-series before submission). Attribution follows `Documentation/process/coding-assistants.rst`.
+## Single source of truth
+`msi-wmi-platform.c` is **generated**, not hand-edited:
 
-Source: `msi-wmi-platform.c` (base from linux-source-7.0.0 + series + our changes),
-`firmware_attributes_class.h` (vendored kernel header), `Makefile`, `dkms.conf`.
+```
+base.c  +  patches-upstream/00NN-*.patch   --( ./regen.sh )-->  msi-wmi-platform.c
+```
+
+`base.c` is Antheas Kapenekakis's in-review v1 series applied on mainline v7.0;
+`patches-upstream/00NN-*.patch` is our follow-up series — the **same code** that
+gets built here and taken to LKML, so "tested" == "submitted". `make verify`
+fails if the committed `.c` has drifted from `base.c` + the patches. To change
+the driver, edit a patch (or add one) and `./regen.sh` — never edit the `.c`.
+Series contents, submission plan and the version-tracking/rebase workflow:
+`patches-upstream/NOTES.md`. Attribution follows
+`Documentation/process/coding-assistants.rst`.
+
+Package files: `base.c` + `patches-upstream/` (source), `msi-wmi-platform.c`
+(generated build artifact), `firmware_attributes_class.h` (vendored kernel
+header), `regen.sh`, `Makefile`, `dkms.conf`.

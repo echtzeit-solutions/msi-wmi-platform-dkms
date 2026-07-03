@@ -11,14 +11,19 @@ Two bodies of work, all on `master`:
    (`docs/`) that justify the driver design.
 
 The driver sits on top of the in-review mainline series (Antheas Kapenekakis,
-`[PATCH v1 00/10] … fan curves/platform profile/tdp/battery limiting`). Our refactor is **not**
-proposed for upstream as-is — it's an out-of-tree/RFC-candidate evolution. The upstreamable pieces
-are the three targeted patches in `msi-wmi-platform/patches-upstream/` (MS-16V5 support, EC-ID
-matching, firmware-resume), to be rebased onto that series' v2.
+`[PATCH v1 00/10] … fan curves/platform profile/tdp/battery limiting`). **The DKMS driver and the
+LKML series are now one source of truth** — `msi-wmi-platform/msi-wmi-platform.c` is *generated*
+from `base.c` (that series applied on mainline v7.0) + `patches-upstream/00NN-*.patch` (our 8-patch
+follow-up series) via `./regen.sh`; `make verify` fails on drift. So the code reviewed here, built
+by DKMS, and proposed upstream are the same bytes ("tested" == "submitted"). Series breakdown and
+submission/rebase plan: `msi-wmi-platform/patches-upstream/NOTES.md`.
 
 ## What changed in the driver (review these)
-Commits: `fix uninitialized err` → `capability cache + Get_Device probe` → `feature-descriptor
-architecture + two-pass probe` → `rename quirk→model` → `heuristic control gate`.
+The 8-patch series (on `base.c`): `add MS-16V5 quirk` → `restore state on firmware resume` →
+`fix uninitialized err` → `capability cache + Get_Device probe` → `feature-descriptor architecture
++ two-pass probe` → `rename quirk→model` → `heuristic control gate` → `fix issues found in review`
+(the last folds into the two refactor patches before list submission). The heart is the
+**heuristic control gate** (patch 0007).
 
 | Area | Change | Why |
 |---|---|---|
@@ -57,6 +62,8 @@ architecture + two-pass probe` → `rename quirk→model` → `heuristic control
 
 ## How to verify
 ```sh
+# single source: the committed .c == base.c + the patch series
+cd msi-wmi-platform && make verify && cd ..
 # build + checkpatch
 make -C /lib/modules/$(uname -r)/build M=$PWD/msi-wmi-platform modules
 scripts/checkpatch.pl --strict --file msi-wmi-platform/msi-wmi-platform.c
