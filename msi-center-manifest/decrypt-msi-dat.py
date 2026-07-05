@@ -68,8 +68,10 @@ def find_crypto_key(dll_path: str | None = None) -> str:
             "ilspycmd not found (dotnet tool install -g ilspycmd). It is needed to "
             "recover the key from CS_CommonAPI.dll; alternatively pass --key."
         )
-    src = subprocess.run(["ilspycmd", dll_path], capture_output=True, text=True).stdout
-    m = re.search(r'CryptoKey\s*=\s*(\d+)\s*\.\s*ToString\(\s*"X"\s*\)', src)
+    res = subprocess.run(["ilspycmd", dll_path], capture_output=True, text=True)
+    if res.returncode != 0:
+        raise SystemExit(f"ilspycmd failed on {dll_path}:\n{res.stderr.strip()}")
+    m = re.search(r'CryptoKey\s*=\s*(\d+)\s*\.\s*ToString\(\s*"X"\s*\)', res.stdout)
     if not m:
         raise SystemExit("Could not locate the CryptoKey constant in " + dll_path)
     return format(int(m.group(1)), "X")
@@ -97,7 +99,11 @@ def decrypt(raw: bytes, crypto_key: str) -> bytes:
     backend, ciph = _aes_cbc(key, iv)
     pt = ciph.decrypt(body) if backend == "pycryptodome" else \
         (lambda d: d.update(body) + d.finalize())(ciph.decryptor())
-    return pt[: -pt[-1]]  # strip PKCS7
+    # strip PKCS7, validating it: garbage padding almost always means a wrong key
+    pad = pt[-1] if pt else 0
+    if not 1 <= pad <= 16 or pt[-pad:] != bytes([pad]) * pad:
+        raise SystemExit("invalid PKCS7 padding after decrypt -- wrong CryptoKey?")
+    return pt[:-pad]
 
 
 def encrypt(plaintext: bytes, crypto_key: str) -> bytes:

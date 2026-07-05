@@ -32,8 +32,13 @@ CREATE TABLE model_component(model TEXT, component TEXT, via TEXT);  -- via: uni
 
 
 def build(pkg_json: str, db_path: str) -> None:
-    d = json.load(open(pkg_json, encoding="utf-8"))
-    pkgs = d["DefinePackage"]
+    with open(pkg_json, encoding="utf-8") as f:
+        d = json.load(f)
+    try:
+        pkgs = d["DefinePackage"]
+    except (KeyError, TypeError):
+        raise SystemExit(f"{pkg_json}: no DefinePackage key -- not a decrypted "
+                         "PackageDataV2 file (GameDataV4 etc. have other schemas)")
     if os.path.exists(db_path):
         os.remove(db_path)
     c = sqlite3.connect(db_path)
