@@ -31,9 +31,13 @@ the first temperature*: set it to `0` for **fans fully off at idle**. The 7th EC
   string written to `cpu/curve` and `gpu/curve`, with `fan_mode=advanced`.
 - **isw** uses `*_temp_0..5` / `*_fan_speed_0..6` keys in `/etc/isw.conf`.
 
-Your current values (ported from msi-ec `curve_apply`: `0 50 41 55 55 60 65 65 85 68 100 80 120`):
+Shipped example values (ported from msi-ec `curve_apply`: `0 50 41 55 55 60 65 65 85 68 100 80 120`):
 - CPU & GPU: temps `50 55 60 65 68 80`, speeds `0 41 55 65 85 100` (speed0..5; `0` = silent
-  below ~55 C, verified 0 RPM at idle). speed6 (120) is above the last point and left to the EC.
+  below the first temp point, 50 C — verified 0 RPM at idle). speed6 (120) is above the last
+  point and left to the EC.
+
+Note on units: the driver takes the temp points as **plain degrees C** (not the usual hwmon
+millidegrees) and speeds as pwm 0-255; the script converts percent -> pwm for you.
 
 ## Install
 ```bash

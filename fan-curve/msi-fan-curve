@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Apply a fan curve to the msi-wmi-platform hwmon device (hardware curve; the EC runs it).
 # Ported from the isw model: 6 temperature points -> 6 speed points, per fan (CPU=pwm1, GPU=pwm2).
+# Temps are written in plain degrees C (this driver's raw unit, NOT the hwmon
+# millidegree convention) -- re-check if the driver ever converts.
 # Usage: msi-fan-curve [CONFFILE]   (default /etc/msi-fan-curve.conf)
 set -euo pipefail
 
@@ -9,14 +11,20 @@ CONF="${1:-/etc/msi-fan-curve.conf}"
 # shellcheck disable=SC1090
 source "$CONF"
 
-# locate the msi_wmi_platform hwmon
-H=""
-for d in /sys/class/hwmon/hwmon*; do
-    [[ "$(cat "$d/name" 2>/dev/null)" == "msi_wmi_platform" ]] && { H="$d"; break; }
-done
-[[ -n "$H" ]] || { echo "msi_wmi_platform hwmon not found (is the module loaded?)" >&2; exit 1; }
-
 pct2pwm() { echo $(( ($1 * 255 + 50) / 100 )); }   # percent (0-100) -> pwm (0-255), rounded
+
+check_curve() {   # $1=label  $2="temps..."  $3="speeds%..."
+    local -a T S; read -r -a T <<<"$2"; read -r -a S <<<"$3"
+    [[ ${#T[@]} -eq 6 && ${#S[@]} -eq 6 ]] ||
+        { echo "$1: need exactly 6 temps and 6 speeds in $CONF" >&2; exit 1; }
+    local v
+    for v in "${T[@]}" "${S[@]}"; do
+        [[ "$v" =~ ^[0-9]+$ ]] || { echo "$1: non-numeric value '$v' in $CONF" >&2; exit 1; }
+    done
+    for v in "${S[@]}"; do
+        (( v <= 100 )) || { echo "$1: speed $v > 100% in $CONF" >&2; exit 1; }
+    done
+}
 
 apply_curve() {   # $1=pwm index (1=CPU,2=GPU)  $2="temps..."  $3="speeds%..."
     local idx="$1"; local -a T S; read -r -a T <<<"$2"; read -r -a S <<<"$3"
@@ -26,7 +34,32 @@ apply_curve() {   # $1=pwm index (1=CPU,2=GPU)  $2="temps..."  $3="speeds%..."
     done
 }
 
-echo 1 > "$H/pwm1_enable"          # manual mode: engage user fan tables (global bit)
+# validate everything before touching the EC (no partial curves on a typo'd conf)
+check_curve CPU "$CPU_TEMP" "$CPU_SPEED"
+check_curve GPU "$GPU_TEMP" "$GPU_SPEED"
+
+# locate the msi_wmi_platform hwmon; the driver probes asynchronously, so wait briefly
+H=""
+for _ in $(seq 1 30); do
+    for d in /sys/class/hwmon/hwmon*; do
+        [[ "$(cat "$d/name" 2>/dev/null)" == "msi_wmi_platform" ]] && { H="$d"; break 2; }
+    done
+    sleep 0.5
+done
+[[ -n "$H" ]] || { echo "msi_wmi_platform hwmon not found (is the module loaded?)" >&2; exit 1; }
+
+[[ -e "$H/pwm1_enable" ]] ||
+    { echo "fan control not exposed on this board ($H/pwm1_enable missing)" >&2; exit 1; }
+[[ -w "$H/pwm1_enable" ]] ||
+    { echo "no write permission on $H/pwm1_enable (run as root)" >&2; exit 1; }
+
+# write the full curves first, engage manual mode last: an abort mid-way must
+# not leave the EC running user tables that were only half written
 apply_curve 1 "$CPU_TEMP" "$CPU_SPEED"
-apply_curve 2 "$GPU_TEMP" "$GPU_SPEED"
+if [[ -e "$H/pwm2_auto_point1_temp" ]]; then
+    apply_curve 2 "$GPU_TEMP" "$GPU_SPEED"
+else
+    echo "no GPU curve on this board (pwm2 absent), skipping"
+fi
+echo 1 > "$H/pwm1_enable"          # manual mode: engage user fan tables (global bit)
 echo "applied fan curve from $CONF to $H"

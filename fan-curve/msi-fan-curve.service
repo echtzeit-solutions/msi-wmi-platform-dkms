@@ -1,8 +1,8 @@
 [Unit]
-Description=MSI MS-16V5 fan curve (msi-wmi-platform)
-After=multi-user.target
-# Resume is handled by the system-sleep hook (50-msi-fan-curve), since the EC
-# drops the manual fan tables across suspend.
+Description=MSI fan curve (msi-wmi-platform)
+# No ordering on the module: the driver probes asynchronously and the apply
+# script waits for the hwmon device itself. Resume needs no hook either -- the
+# driver re-applies the fan state after firmware resume (deep S3/hibernate).
 
 [Service]
 Type=oneshot
