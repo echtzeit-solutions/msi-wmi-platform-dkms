@@ -67,7 +67,8 @@ EC version "16V5EMS1.108"). It is a **generic EC-RAM access ABI**, not secret pe
 | **0x1C** | **write ANY EC addr** (WMWT(IPAR, BS00)) |
 | 0x1D | interface version (BL01=MAJR, BL02=MINR) |
 
-Full extraction: `re/wmam_dispatch.txt`. Generic mailbox also at ports 0x360/0x361 (WMRD/WMWT).
+Full extraction: `wmam_dispatch.txt` in the local RE workspace (not shipped in this repo).
+Generic mailbox also at ports 0x360/0x361 (WMRD/WMWT).
 
 **Consequence:** host-accessible feature surface == the 256-byte EC RAM (IPAR is 8-bit). The
 driver only needs generic read/write-byte (Arg1 0x1B/0x1C) + our register map. No hidden WMI-only

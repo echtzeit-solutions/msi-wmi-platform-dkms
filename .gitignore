@@ -10,6 +10,6 @@ modules.order
 
 # regenerated MSI Center census artifacts (proprietary-derived; regenerate locally)
 msi-center-manifest/data/
-msi-center-manifest/*.sqlite
+*.sqlite
 __pycache__/
 *.pyc

@@ -22,6 +22,7 @@ Verified: reaches S0i3.0 / Package-C10 (deep idle) when suspended.
 Light suspend first (instant resume, lid-wake), then hibernate after a timeout (zero drain,
 LUKS re-unlock on resume). Requires working hibernate (swap ≥ RAM + resume configured).
 ```bash
+sudo mkdir -p /etc/systemd/sleep.conf.d
 sudo cp sleep.conf.example /etc/systemd/sleep.conf.d/10-ms16v5.conf   # adjust delay
 # test a single hibernate/resume cycle FIRST before relying on it:
 systemctl hibernate
