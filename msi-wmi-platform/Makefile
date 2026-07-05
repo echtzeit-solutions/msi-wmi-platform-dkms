@@ -12,18 +12,18 @@ all:
 	@echo "msi-wmi-platform (single source: base.c + patches-upstream/*.patch)"
 	@echo "  make regen   - regenerate msi-wmi-platform.c from base.c + patches"
 	@echo "  make verify  - fail if msi-wmi-platform.c has drifted from them"
-	@echo "  module build - make -C /lib/modules/\$$(uname -r)/build M=\$$(PWD) modules"
+	@echo "  module build - make -C /lib/modules/\$$(uname -r)/build M=\$$PWD modules"
 
 regen:
 	./regen.sh
 
 # Fail if the committed .c has drifted from base.c + the patch series.
+# Reuses regen.sh (the single apply loop) into a scratch file.
 verify:
-	@tmp=$$(mktemp); cp base.c $$tmp; \
-	for p in patches-upstream/0[0-9][0-9][0-9]-*.patch; do \
-		[ -e "$$p" ] || continue; \
-		patch -s -p4 --no-backup-if-mismatch $$tmp < "$$p"; \
-	done; \
+	@tmp=$$(mktemp); \
+	if ! REGEN_OUT=$$tmp ./regen.sh >/dev/null; then \
+		rm -f $$tmp; exit 1; \
+	fi; \
 	if diff -q $$tmp msi-wmi-platform.c >/dev/null; then \
 		echo "verify: msi-wmi-platform.c matches base.c + patches-upstream/ OK"; \
 		rm -f $$tmp; \

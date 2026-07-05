@@ -12,20 +12,32 @@
 #                               AND the source for this file. Kernel-tree paths
 #                               (drivers/platform/x86/...), hence `patch -p4`.
 #
-# `make verify` re-runs this into a scratch copy and diffs, failing on drift.
+# REGEN_OUT overrides the output path (used by `make verify` to regenerate into
+# a scratch file and diff). `make verify` fails on any drift.
 set -eu
 cd "$(dirname "$0")"
 
-out=msi-wmi-platform.c
+out="${REGEN_OUT:-msi-wmi-platform.c}"
 tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
 cp base.c "$tmp"
 
 n=0
 for p in patches-upstream/0[0-9][0-9][0-9]-*.patch; do
 	[ -e "$p" ] || continue
-	patch -s -p4 --no-backup-if-mismatch "$tmp" < "$p"
+	# patch(1) is pointed at the single target file, ignoring per-file paths:
+	# refuse multi-file patches, which it would silently misapply
+	if [ "$(grep -c '^diff --git ' "$p")" -ne 1 ]; then
+		echo "regen: $p touches more than one file; cannot apply to $out" >&2
+		exit 1
+	fi
+	patch -s -p4 --no-backup-if-mismatch "$tmp" < "$p" || {
+		echo "regen: $p failed to apply" >&2
+		exit 1
+	}
 	n=$((n + 1))
 done
 
-mv "$tmp" "$out"
+cp "$tmp" "$out"
+chmod 644 "$out"
 echo "regenerated $out from base.c + $n patch(es)"
