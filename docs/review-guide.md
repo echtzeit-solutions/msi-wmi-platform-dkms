@@ -13,17 +13,17 @@ Two bodies of work, all on `master`:
 The driver sits on top of the in-review mainline series (Antheas Kapenekakis,
 `[PATCH v1 00/10] … fan curves/platform profile/tdp/battery limiting`). **The DKMS driver and the
 LKML series are now one source of truth** — `msi-wmi-platform/msi-wmi-platform.c` is *generated*
-from `base.c` (that series applied on mainline v7.0) + `patches-upstream/00NN-*.patch` (our 8-patch
-follow-up series) via `./regen.sh`; `make verify` fails on drift. So the code reviewed here, built
+from `base.c` (that series applied on mainline v7.0) + `patches-upstream/00NN-*.patch` (our
+follow-up series, 10 patches) via `./regen.sh`; `make verify` fails on drift. So the code reviewed here, built
 by DKMS, and proposed upstream are the same bytes ("tested" == "submitted"). Series breakdown and
 submission/rebase plan: `msi-wmi-platform/patches-upstream/NOTES.md`.
 
 ## What changed in the driver (review these)
-The 8-patch series (on `base.c`): `add MS-16V5 quirk` → `restore state on firmware resume` →
+The series (on `base.c`): `add MS-16V5 quirk` → `restore state on firmware resume` →
 `fix uninitialized err` → `capability cache + Get_Device probe` → `feature-descriptor architecture
 + two-pass probe` → `rename quirk→model` → `heuristic control gate` → `fix issues found in review`
-(the last folds into the two refactor patches before list submission). The heart is the
-**heuristic control gate** (patch 0007).
+(folds into the patches it fixes before list submission) → `disable_control module parameter` →
+`fix debugfs writes executing stale data`. The heart is the **heuristic control gate** (patch 0007).
 
 | Area | Change | Why |
 |---|---|---|

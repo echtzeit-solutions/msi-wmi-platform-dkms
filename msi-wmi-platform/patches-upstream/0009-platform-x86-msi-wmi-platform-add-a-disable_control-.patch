@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Sun, 5 Jul 2026 11:57:05 +0200
+Subject: [PATCH 09/10] platform/x86: msi-wmi-platform: add a disable_control
+ module parameter
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The control heuristic ships with an empty deny list: MSI Center excludes
+a few Modern/Creator thin-and-lights that the vendor+chassis+modern-ABI
+check cannot tell apart, so a false positive (a control that no-ops, or
+in the worst case a fan-curve write with unexpected effect) is possible
+on boards nobody has tested yet.
+
+Give users an unconditional veto: disable_control=1 turns off all
+control features (platform profile, charge threshold, fan curves) while
+keeping the read-only sensors, without waiting for a deny_control model
+entry. It also overrides force_control models, since an explicit user
+request should win.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/platform/x86/msi-wmi-platform.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 54c53d5..f2dc564 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -95,6 +95,11 @@ static bool force;
+ module_param_unsafe(force, bool, 0);
+ MODULE_PARM_DESC(force, "Force loading without checking for supported WMI interface versions");
+ 
++static bool disable_control;
++module_param(disable_control, bool, 0);
++MODULE_PARM_DESC(disable_control,
++		 "Disable control features (platform profile, charge threshold, fan curves)");
++
+ enum msi_wmi_platform_method {
+ 	MSI_PLATFORM_GET_PACKAGE	= 0x01,
+ 	MSI_PLATFORM_SET_PACKAGE	= 0x02,
+@@ -201,13 +206,17 @@ static inline bool msi_feature_enabled(const struct msi_wmi_platform_data *data,
+  * MSI notebook/convertible with a modern (interface v2, Tigerlake+ EC) ABI.
+  * This covers modern MSI notebooks generically, without a per-model table. A
+  * per-family entry may still force-enable it (boards the heuristic misses, e.g.
+- * handhelds) or deny it (known-incompatible models).
++ * handhelds) or deny it (known-incompatible models), and the disable_control
++ * module parameter vetoes control unconditionally -- the user escape hatch for
++ * a heuristic false positive.
+  */
+ static bool msi_control_supported(struct msi_wmi_platform_data *data)
+ {
+ 	const char *vendor, *chassis;
+ 	unsigned long chassis_type;
+ 
++	if (disable_control)
++		return false;
+ 	if (data->model->deny_control)
+ 		return false;
+ 	if (data->model->force_control)
+-- 
+2.53.0
+

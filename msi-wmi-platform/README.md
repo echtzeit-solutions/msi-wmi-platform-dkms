@@ -25,9 +25,9 @@ sudo ../install.sh
 
 ## Manual DKMS
 ```bash
-sudo cp -r . /usr/src/msi-wmi-platform-dkms-0.6
-sudo dkms add    -m msi-wmi-platform-dkms -v 0.6
-sudo dkms install -m msi-wmi-platform-dkms -v 0.6 --force
+sudo cp -r . /usr/src/msi-wmi-platform-dkms-0.7
+sudo dkms add    -m msi-wmi-platform-dkms -v 0.7
+sudo dkms install -m msi-wmi-platform-dkms -v 0.7 --force
 sudo modprobe -r msi_wmi_platform && sudo modprobe msi_wmi_platform
 ```
 Installs to `updates/dkms/` (overrides the in-tree module), DKMS auto-signs with your MOK

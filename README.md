@@ -53,6 +53,9 @@ misbehaves:
 - fan control: `echo 2 | sudo tee /sys/class/hwmon/hwmonX/pwm1_enable` puts the
   EC back in auto mode and restores the factory curve; unloading the module
   (`sudo modprobe -r msi_wmi_platform`) does the same.
+- keep the sensors but veto all control: reload with
+  `modprobe msi_wmi_platform disable_control=1` (make it stick via a
+  `modprobe.d` options line).
 - worst case: uninstall (below) — the in-tree read-only driver takes over.
 
 Please report success or failure either way (open an issue) with:

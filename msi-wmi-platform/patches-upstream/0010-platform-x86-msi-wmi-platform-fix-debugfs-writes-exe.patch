@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Sun, 5 Jul 2026 11:57:05 +0200
+Subject: [PATCH 10/10] platform/x86: msi-wmi-platform: fix debugfs writes
+ executing stale data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The debugfs write handler runs the WMI method on the previous contents
+of data->buffer and only then copies the just-written payload into it,
+clobbering the method's result. Net effect: every write executes the
+*previous* write's command (initially zeroes), and a subsequent read
+shows the raw payload instead of the firmware's reply, so the debugfs
+interface never exposes a result at all.
+
+Copy the payload into the buffer first and run the method on it, under
+a single critical section; the in/out buffer then holds the reply for
+reading, matching the documented semantics (and the behaviour of the
+mainline driver before the input-buffer rework in this series).
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/platform/x86/msi-wmi-platform.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index f2dc564..d477ded 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -1402,6 +1402,7 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user
+ 		return ret;
+ 
+ 	down_write(&data->buffer_lock);
++	memcpy(data->buffer, payload, data->length);
+ 	ret = msi_wmi_platform_query(data->data, data->method, data->buffer,
+ 				     data->length);
+ 	up_write(&data->buffer_lock);
+@@ -1409,10 +1410,6 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	down_write(&data->buffer_lock);
+-	memcpy(data->buffer, payload, data->length);
+-	up_write(&data->buffer_lock);
+-
+ 	return length;
+ }
+ 
+-- 
+2.53.0
+

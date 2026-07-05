@@ -95,6 +95,11 @@ static bool force;
 module_param_unsafe(force, bool, 0);
 MODULE_PARM_DESC(force, "Force loading without checking for supported WMI interface versions");
 
+static bool disable_control;
+module_param(disable_control, bool, 0);
+MODULE_PARM_DESC(disable_control,
+		 "Disable control features (platform profile, charge threshold, fan curves)");
+
 enum msi_wmi_platform_method {
 	MSI_PLATFORM_GET_PACKAGE	= 0x01,
 	MSI_PLATFORM_SET_PACKAGE	= 0x02,
@@ -159,18 +164,13 @@ enum msi_feature_id {
 
 /*
  * Runtime capability cache, probed once at ->probe(). Mirrors how MSI Center
- * decides features: interface/EC versions gate the ABI, and the Get_Device(0x01)
- * bitmap advertises hardware presence. Populated by msi_wmi_platform_init(),
- * _ec_init(), _match_ec_id() and _caps_probe().
+ * decides features: the interface/EC versions gate the ABI. Populated by
+ * msi_wmi_platform_init() and _ec_init(), consumed by msi_control_supported().
  */
 struct msi_wmi_platform_caps {
 	bool wmi_valid;
-	u8 wmi_major, wmi_minor;
-	bool ec_valid, is_tigerlake;
-	u8 ec_major, ec_minor;
-	char ec_id[MSI_PLATFORM_ECID_LEN + 1];	/* 4-char EC prefix, e.g. "16V5" */
-	bool device_bitmap_valid;
-	u32 device_bitmap;			/* Get_Device(0x01) presence bits */
+	u8 wmi_major;
+	bool is_tigerlake;
 };
 
 struct msi_wmi_platform_data {
@@ -206,13 +206,17 @@ static inline bool msi_feature_enabled(const struct msi_wmi_platform_data *data,
  * MSI notebook/convertible with a modern (interface v2, Tigerlake+ EC) ABI.
  * This covers modern MSI notebooks generically, without a per-model table. A
  * per-family entry may still force-enable it (boards the heuristic misses, e.g.
- * handhelds) or deny it (known-incompatible models).
+ * handhelds) or deny it (known-incompatible models), and the disable_control
+ * module parameter vetoes control unconditionally -- the user escape hatch for
+ * a heuristic false positive.
  */
 static bool msi_control_supported(struct msi_wmi_platform_data *data)
 {
 	const char *vendor, *chassis;
 	unsigned long chassis_type;
 
+	if (disable_control)
+		return false;
 	if (data->model->deny_control)
 		return false;
 	if (data->model->force_control)
@@ -896,13 +900,11 @@ static int msi_wmi_platform_profile_probe(void *drvdata, unsigned long *choices)
 	return 0;
 }
 
-static int msi_wmi_platform_profile_get(struct device *dev,
-					enum platform_profile_option *profile)
+static int msi_wmi_platform_profile_read(struct msi_wmi_platform_data *data,
+					 enum platform_profile_option *profile)
 {
-	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
-	int ret;
-
 	u8 buffer[32] = { };
+	int ret;
 
 	buffer[0] = MSI_PLATFORM_SHIFT_ADDR;
 
@@ -932,6 +934,12 @@ static int msi_wmi_platform_profile_get(struct device *dev,
 	default:
 		return -EINVAL;
 	}
+}
+
+static int msi_wmi_platform_profile_get(struct device *dev,
+					enum platform_profile_option *profile)
+{
+	return msi_wmi_platform_profile_read(dev_get_drvdata(dev), profile);
 }
 
 static int msi_wmi_platform_profile_apply(struct msi_wmi_platform_data *data,
@@ -1394,16 +1402,13 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user
 		return ret;
 
 	down_write(&data->buffer_lock);
+	memcpy(data->buffer, payload, data->length);
 	ret = msi_wmi_platform_query(data->data, data->method, data->buffer,
 				     data->length);
 	up_write(&data->buffer_lock);
 
 	if (ret < 0)
 		return ret;
-
-	down_write(&data->buffer_lock);
-	memcpy(data->buffer, payload, data->length);
-	up_write(&data->buffer_lock);
 
 	return length;
 }
@@ -1525,10 +1530,7 @@ static int msi_wmi_platform_ec_init(struct msi_wmi_platform_data *data)
 	dev_dbg(&data->wdev->dev, "EC firmware version %.28s\n",
 		&buffer[MSI_PLATFORM_EC_VERSION_OFFSET]);
 
-	data->caps.ec_major = FIELD_GET(MSI_PLATFORM_EC_MAJOR_MASK, flags);
-	data->caps.ec_minor = FIELD_GET(MSI_PLATFORM_EC_MINOR_MASK, flags);
 	data->caps.is_tigerlake = flags & MSI_PLATFORM_EC_IS_TIGERLAKE;
-	data->caps.ec_valid = true;
 
 	if (!(flags & MSI_PLATFORM_EC_IS_TIGERLAKE)) {
 		if (!force)
@@ -1554,7 +1556,6 @@ static int msi_wmi_platform_init(struct msi_wmi_platform_data *data)
 		buffer[MSI_PLATFORM_WMI_MINOR_OFFSET]);
 
 	data->caps.wmi_major = buffer[MSI_PLATFORM_WMI_MAJOR_OFFSET];
-	data->caps.wmi_minor = buffer[MSI_PLATFORM_WMI_MINOR_OFFSET];
 	data->caps.wmi_valid = true;
 
 	if (buffer[MSI_PLATFORM_WMI_MAJOR_OFFSET] != MSI_WMI_PLATFORM_INTERFACE_VERSION) {
@@ -1600,7 +1601,7 @@ msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
 		id[i] = buffer[1];
 	}
 
-	strscpy(data->caps.ec_id, id, sizeof(data->caps.ec_id));
+	dev_info(&data->wdev->dev, "EC firmware ID prefix \"%s\"\n", id);
 
 	for (e = msi_ec_models; e->ec_id; e++)
 		if (!strncmp(id, e->ec_id, MSI_PLATFORM_ECID_LEN))
@@ -1610,13 +1611,13 @@ msi_wmi_platform_match_ec_id(struct msi_wmi_platform_data *data)
 }
 
 /*
- * Cache the Get_Device(0x01) hardware-presence bitmap. Non-fatal. The bitmap
+ * Log the Get_Device(0x01) hardware-presence bitmap. Non-fatal. The bitmap
  * advertises read-only presence features (per MSI Center: Data[1] bit1=webcam,
- * bit4=panel-OD; Data[2] bit3=backlight, bit6=HSR). Packed little-endian into a
- * u32 (Data[1]=bits 0-7, Data[2]=bits 8-15, ...). Raw bytes are logged for
- * cross-referencing the decode on hardware.
+ * bit4=panel-OD; Data[2] bit3=backlight, bit6=HSR). Logged, not cached: the
+ * driver does not consume it yet, but reports from unrecognized boards need it
+ * to cross-reference the decode on real hardware.
  */
-static void msi_wmi_platform_caps_probe(struct msi_wmi_platform_data *data)
+static void msi_wmi_platform_presence_log(struct msi_wmi_platform_data *data)
 {
 	u8 buffer[32] = { MSI_PLATFORM_DEVICE_SUBFEATURE_PRESENCE };
 	int ret;
@@ -1625,9 +1626,6 @@ static void msi_wmi_platform_caps_probe(struct msi_wmi_platform_data *data)
 	if (ret < 0 || buffer[0] != 1)
 		return;
 
-	data->caps.device_bitmap = buffer[1] | (buffer[2] << 8) |
-				   (buffer[3] << 16) | (buffer[4] << 24);
-	data->caps.device_bitmap_valid = true;
 	dev_info(&data->wdev->dev,
 		 "Get_Device(0x01) presence bitmap: %02x %02x %02x %02x\n",
 		 buffer[1], buffer[2], buffer[3], buffer[4]);
@@ -1652,7 +1650,7 @@ static int msi_feat_profile_setup(struct msi_wmi_platform_data *data)
 	if (ret < 0)
 		return ret;
 	/* Seed the cached profile from current EC state for resume re-apply. */
-	msi_wmi_platform_profile_get(&data->wdev->dev, &data->cur_profile);
+	msi_wmi_platform_profile_read(data, &data->cur_profile);
 	return 0;
 }
 
@@ -1715,18 +1713,27 @@ static int msi_feat_fan_curves_suspend(struct msi_wmi_platform_data *data)
 {
 	u8 buffer[32] = { MSI_PLATFORM_AP_SUBFEATURE_FAN_MODE };
 
-	/* Default off so a failed GET_AP can't make resume restore stale tables. */
+	/*
+	 * Only mark the snapshot restorable once every read succeeded: resume
+	 * must never enable fan tables that were snapshotted incompletely.
+	 */
 	data->fan_tables_enabled = false;
-	if (!msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)))
-		data->fan_tables_enabled = buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] &
-					   MSI_PLATFORM_AP_ENABLE_FAN_TABLES;
+
+	if (msi_wmi_platform_query(data, MSI_PLATFORM_GET_AP, buffer, sizeof(buffer)) < 0)
+		return 0;
+	if (!(buffer[MSI_PLATFORM_AP_FAN_FLAGS_OFFSET] & MSI_PLATFORM_AP_ENABLE_FAN_TABLES))
+		return 0;
 
 	data->fan_table_cpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_CPU_FAN_TABLE;
-	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_cpu,
-			       sizeof(data->fan_table_cpu));
+	if (msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_cpu,
+				   sizeof(data->fan_table_cpu)) < 0)
+		return 0;
 	data->fan_table_gpu[0] = MSI_PLATFORM_FAN_SUBFEATURE_GPU_FAN_TABLE;
-	msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_gpu,
-			       sizeof(data->fan_table_gpu));
+	if (msi_wmi_platform_query(data, MSI_PLATFORM_GET_FAN, data->fan_table_gpu,
+				   sizeof(data->fan_table_gpu)) < 0)
+		return 0;
+
+	data->fan_tables_enabled = true;
 	return 0;
 }
 
@@ -1839,7 +1846,7 @@ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
 	if (ret < 0)
 		return ret;
 
-	msi_wmi_platform_caps_probe(data);
+	msi_wmi_platform_presence_log(data);
 
 	ret = msi_wmi_fw_attrs_init(data);
 	if (ret < 0)
@@ -1901,29 +1908,53 @@ static int msi_wmi_platform_suspend(struct device *dev)
 	return 0;
 }
 
-/*
- * Firmware resume (deep S3 / hibernate) resets the EC's live control state, so
- * each feature re-applies what it owns (platform_profile, fan curves/mode).
- * s2idle keeps everything powered -> nothing to do. (Verified on MS-16V5: deep
- * S3 resets 0xD2, 0xD4 and the fan curve tables; s2idle resets nothing.)
- */
-static int msi_wmi_platform_resume(struct device *dev)
+static void msi_wmi_platform_state_reapply(struct msi_wmi_platform_data *data)
 {
-	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
 	unsigned int fid;
-
-	if (!pm_resume_via_firmware())
-		return 0;
 
 	for_each_set_bit(fid, data->features, MSI_FEAT_COUNT)
 		if (msi_features[fid].resume)
 			msi_features[fid].resume(data);
+}
+
+/*
+ * Firmware resume (deep S3) resets the EC's live control state, so each
+ * feature re-applies what it owns (platform_profile, fan curves/mode). s2idle
+ * keeps everything powered -> nothing to do, and neither has the thaw phase of
+ * hibernation. (Verified on MS-16V5: deep S3 resets 0xD2, 0xD4 and the fan
+ * curve tables; s2idle resets nothing.)
+ */
+static int msi_wmi_platform_resume(struct device *dev)
+{
+	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+
+	if (pm_resume_via_firmware())
+		msi_wmi_platform_state_reapply(data);
 
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(msi_wmi_platform_pm_ops,
-				msi_wmi_platform_suspend, msi_wmi_platform_resume);
+/*
+ * Restore from hibernation: the EC was powered off, so its state is always
+ * firmware-fresh. Unlike .resume this must not depend on
+ * pm_resume_via_firmware(), which non-platform hibernation (disk=shutdown or
+ * disk=reboot) never sets.
+ */
+static int msi_wmi_platform_restore(struct device *dev)
+{
+	msi_wmi_platform_state_reapply(dev_get_drvdata(dev));
+
+	return 0;
+}
+
+static const struct dev_pm_ops msi_wmi_platform_pm_ops = {
+	.suspend = pm_sleep_ptr(msi_wmi_platform_suspend),
+	.freeze = pm_sleep_ptr(msi_wmi_platform_suspend),
+	.poweroff = pm_sleep_ptr(msi_wmi_platform_suspend),
+	.resume = pm_sleep_ptr(msi_wmi_platform_resume),
+	.thaw = pm_sleep_ptr(msi_wmi_platform_resume),
+	.restore = pm_sleep_ptr(msi_wmi_platform_restore),
+};
 
 static const struct wmi_device_id msi_wmi_platform_id_table[] = {
 	{ MSI_PLATFORM_GUID, NULL },
