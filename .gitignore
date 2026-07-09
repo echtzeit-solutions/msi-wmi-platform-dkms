@@ -10,6 +10,7 @@ modules.order
 
 # regenerated MSI Center census artifacts (proprietary-derived; regenerate locally)
 msi-center-manifest/data/
+keyboard-rgb/edevice-decrypted/
 *.sqlite
 __pycache__/
 *.pyc

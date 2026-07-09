@@ -1,0 +1,360 @@
+{
+  "device": "MSI Stealth GS66 12UHS (MS-16V5)",
+  "usb": "1038:113a SteelSeries KLC",
+  "source": "MSI Center MysticLight_AllDevice.dll v1.0.0.96 GE73Keys/Group[1-6]_Offset",
+  "note": "key name -> USB HID usage code; region = feature-report group (0x0E format). numpad/numlock dropped (GS66 has none).",
+  "keys": {
+    "CLK_A": {
+      "hid": 4,
+      "region": "Group1_Offset"
+    },
+    "CLK_B": {
+      "hid": 5,
+      "region": "Group3_Offset"
+    },
+    "CLK_C": {
+      "hid": 6,
+      "region": "Group2_Offset"
+    },
+    "CLK_D": {
+      "hid": 7,
+      "region": "Group2_Offset"
+    },
+    "CLK_E": {
+      "hid": 8,
+      "region": "Group2_Offset"
+    },
+    "CLK_F": {
+      "hid": 9,
+      "region": "Group2_Offset"
+    },
+    "CLK_G": {
+      "hid": 10,
+      "region": "Group2_Offset"
+    },
+    "CLK_H": {
+      "hid": 11,
+      "region": "Group3_Offset"
+    },
+    "CLK_I": {
+      "hid": 12,
+      "region": "Group3_Offset"
+    },
+    "CLK_J": {
+      "hid": 13,
+      "region": "Group3_Offset"
+    },
+    "CLK_K": {
+      "hid": 14,
+      "region": "Group3_Offset"
+    },
+    "CLK_L": {
+      "hid": 15,
+      "region": "Group4_Offset"
+    },
+    "CLK_M": {
+      "hid": 16,
+      "region": "Group3_Offset"
+    },
+    "CLK_N": {
+      "hid": 17,
+      "region": "Group3_Offset"
+    },
+    "CLK_O": {
+      "hid": 18,
+      "region": "Group4_Offset"
+    },
+    "CLK_P": {
+      "hid": 19,
+      "region": "Group4_Offset"
+    },
+    "CLK_Q": {
+      "hid": 20,
+      "region": "Group1_Offset"
+    },
+    "CLK_R": {
+      "hid": 21,
+      "region": "Group2_Offset"
+    },
+    "CLK_S": {
+      "hid": 22,
+      "region": "Group1_Offset"
+    },
+    "CLK_T": {
+      "hid": 23,
+      "region": "Group2_Offset"
+    },
+    "CLK_U": {
+      "hid": 24,
+      "region": "Group3_Offset"
+    },
+    "CLK_V": {
+      "hid": 25,
+      "region": "Group2_Offset"
+    },
+    "CLK_W": {
+      "hid": 26,
+      "region": "Group1_Offset"
+    },
+    "CLK_X": {
+      "hid": 27,
+      "region": "Group2_Offset"
+    },
+    "CLK_Y": {
+      "hid": 28,
+      "region": "Group3_Offset"
+    },
+    "CLK_Z": {
+      "hid": 29,
+      "region": "Group1_Offset"
+    },
+    "CLK_1": {
+      "hid": 30,
+      "region": "Group1_Offset"
+    },
+    "CLK_2": {
+      "hid": 31,
+      "region": "Group1_Offset"
+    },
+    "CLK_3": {
+      "hid": 32,
+      "region": "Group2_Offset"
+    },
+    "CLK_4": {
+      "hid": 33,
+      "region": "Group2_Offset"
+    },
+    "CLK_5": {
+      "hid": 34,
+      "region": "Group2_Offset"
+    },
+    "CLK_6": {
+      "hid": 35,
+      "region": "Group3_Offset"
+    },
+    "CLK_7": {
+      "hid": 36,
+      "region": "Group3_Offset"
+    },
+    "CLK_8": {
+      "hid": 37,
+      "region": "Group3_Offset"
+    },
+    "CLK_9": {
+      "hid": 38,
+      "region": "Group4_Offset"
+    },
+    "CLK_0": {
+      "hid": 39,
+      "region": "Group4_Offset"
+    },
+    "CLK_Enter": {
+      "hid": 40,
+      "region": "Group5_Offset"
+    },
+    "CLK_Escape": {
+      "hid": 41,
+      "region": "Group1_Offset"
+    },
+    "CLK_Backspace": {
+      "hid": 42,
+      "region": "Group5_Offset"
+    },
+    "CLK_Tab": {
+      "hid": 43,
+      "region": "Group1_Offset"
+    },
+    "CLK_Space": {
+      "hid": 44,
+      "region": "Group3_Offset"
+    },
+    "CLK_MinusAndUnderscore": {
+      "hid": 45,
+      "region": "Group4_Offset"
+    },
+    "CLK_EqualsAndPlus": {
+      "hid": 46,
+      "region": "Group5_Offset"
+    },
+    "CLK_BracketLeft": {
+      "hid": 47,
+      "region": "Group4_Offset"
+    },
+    "CLK_BracketRight": {
+      "hid": 48,
+      "region": "Group5_Offset"
+    },
+    "CLK_Backslash": {
+      "hid": 49,
+      "region": "Group5_Offset"
+    },
+    "CLK_SemicolonAndColon": {
+      "hid": 51,
+      "region": "Group4_Offset"
+    },
+    "CLK_ApostropheAndDoubleQuote": {
+      "hid": 52,
+      "region": "Group4_Offset"
+    },
+    "CLK_GraveAccentAndTilde": {
+      "hid": 53,
+      "region": "Group1_Offset"
+    },
+    "CLK_CommaAndLessThan": {
+      "hid": 54,
+      "region": "Group4_Offset"
+    },
+    "CLK_PeriodAndBiggerThan": {
+      "hid": 55,
+      "region": "Group4_Offset"
+    },
+    "CLK_SlashAndQuestionMark": {
+      "hid": 56,
+      "region": "Group4_Offset"
+    },
+    "CLK_CapsLock": {
+      "hid": 57,
+      "region": "Group1_Offset"
+    },
+    "CLK_F1": {
+      "hid": 58,
+      "region": "Group1_Offset"
+    },
+    "CLK_F2": {
+      "hid": 59,
+      "region": "Group1_Offset"
+    },
+    "CLK_F3": {
+      "hid": 60,
+      "region": "Group2_Offset"
+    },
+    "CLK_F4": {
+      "hid": 61,
+      "region": "Group2_Offset"
+    },
+    "CLK_F5": {
+      "hid": 62,
+      "region": "Group2_Offset"
+    },
+    "CLK_F6": {
+      "hid": 63,
+      "region": "Group3_Offset"
+    },
+    "CLK_F7": {
+      "hid": 64,
+      "region": "Group3_Offset"
+    },
+    "CLK_F8": {
+      "hid": 65,
+      "region": "Group3_Offset"
+    },
+    "CLK_F9": {
+      "hid": 66,
+      "region": "Group3_Offset"
+    },
+    "CLK_F10": {
+      "hid": 67,
+      "region": "Group4_Offset"
+    },
+    "CLK_F11": {
+      "hid": 68,
+      "region": "Group4_Offset"
+    },
+    "CLK_F12": {
+      "hid": 69,
+      "region": "Group4_Offset"
+    },
+    "CLK_PrintScreen": {
+      "hid": 70,
+      "region": "Group5_Offset"
+    },
+    "CLK_ScrollLock": {
+      "hid": 71,
+      "region": "Group5_Offset"
+    },
+    "CLK_PauseBreak": {
+      "hid": 72,
+      "region": "Group5_Offset"
+    },
+    "CLK_Insert": {
+      "hid": 73,
+      "region": "Group6_Offset"
+    },
+    "CLK_Home": {
+      "hid": 74,
+      "region": "Group1_Offset"
+    },
+    "CLK_PageUpAndHome": {
+      "hid": 75,
+      "region": "Group6_Offset"
+    },
+    "CLK_Delete": {
+      "hid": 76,
+      "region": "Group6_Offset"
+    },
+    "CLK_End": {
+      "hid": 77,
+      "region": "Group1_Offset"
+    },
+    "CLK_PageDownAndEnd": {
+      "hid": 78,
+      "region": "Group6_Offset"
+    },
+    "CLK_RightArrow": {
+      "hid": 79,
+      "region": "Group6_Offset"
+    },
+    "CLK_LeftArrow": {
+      "hid": 80,
+      "region": "Group5_Offset"
+    },
+    "CLK_DownArrow": {
+      "hid": 81,
+      "region": "Group5_Offset"
+    },
+    "CLK_UpArrow": {
+      "hid": 82,
+      "region": "Group5_Offset"
+    },
+    "CLK_Backslash2": {
+      "hid": 100,
+      "region": "Group4_Offset"
+    },
+    "CLK_Power": {
+      "hid": 102,
+      "region": "Group6_Offset"
+    },
+    "CLK_LeftCtrl": {
+      "hid": 224,
+      "region": "Group1_Offset"
+    },
+    "CLK_LeftShift": {
+      "hid": 225,
+      "region": "Group1_Offset"
+    },
+    "CLK_LeftAlt": {
+      "hid": 226,
+      "region": "Group2_Offset"
+    },
+    "CLK_LeftGui": {
+      "hid": 227,
+      "region": "Group4_Offset"
+    },
+    "CLK_RightCtrl": {
+      "hid": 228,
+      "region": "Group5_Offset"
+    },
+    "CLK_RightShift": {
+      "hid": 229,
+      "region": "Group5_Offset"
+    },
+    "CLK_RightAlt": {
+      "hid": 230,
+      "region": "Group4_Offset"
+    },
+    "CLK_Fn": {
+      "hid": 240,
+      "region": "Group1_Offset"
+    }
+  }
+}
