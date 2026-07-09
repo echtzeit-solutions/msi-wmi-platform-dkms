@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Tue, 8 Jul 2026 10:00:00 +0200
+Subject: [PATCH 00/13] platform/x86: msi-wmi-platform: generic enablement,
+ status LEDs, webcam, debugfs lockdown
+
+This follow-up series extends the in-tree msi-wmi-platform driver on top of
+Antheas Kapenekakis's "add fan curves/platform profile/tdp/battery limiting"
+work with generic, capability-based enablement and three new user-facing
+feature interfaces. It is hardware-tested on an MSI Stealth GS66 12UHS
+(MS-16V5).
+
+Patches 1-10 make the control features work generically across modern MSI
+notebooks without a per-model register table: MS-16V5 support, firmware-resume
+state restore, a runtime capability cache (the Get_Device presence bitmap plus
+the WMI/EC ABI version), a feature-descriptor architecture with a two-pass
+probe, and a control gate that mirrors MSI Center's own Features.IsSupport()
+heuristic (MSI vendor + notebook/convertible chassis + interface v2 + a
+Tigerlake+ EC), plus a disable_control escape hatch and review fixes.
+
+Patches 11-13 add new interfaces, all through the bounded Get_Data/Set_Data EC
+ABI -- a single named register per call, not arbitrary EC access:
+
+ - status/USB/keyboard LEDs as LED class devices (mic-mute, mute, USB backlight
+   and the keyboard-backlight enable);
+
+ - a webcam power control (camera_power), gated by the Get_Device
+   SupportedWebCam bit.  On these machines it cuts power to the camera at the
+   USB level -- the device de-enumerates from the bus rather than blanking the
+   image -- so it is a writable control like ideapad-laptop's camera_power, not
+   an SW_CAMERA_LENS_COVER switch (there is no physical cover);
+
+ - and, since the debugfs interface can drive Set_EC() and friends (arbitrary
+   EC / hardware-register writes, functionally /dev/mem-equivalent), a lockdown
+   guard so the debug interface is refused under kernel lockdown (Secure Boot).
+
+Hardware-tested on MS-16V5: the LED writes reach the EC, camera_power
+enumerates/de-enumerates the integrated USB webcam, and platform_profile, the
+charge threshold and the fan curves are unaffected. checkpatch --strict clean.
+
+Florian Hänel (13):
+  platform/x86: msi-wmi-platform: add MS-16V5 (Stealth GS66 12Ux) quirk
+  platform/x86: msi-wmi-platform: restore state on firmware resume
+  platform/x86: msi-wmi-platform: fix uninitialized err in profile_setup
+  platform/x86: msi-wmi-platform: add runtime capability cache + Get_Device probe
+  platform/x86: msi-wmi-platform: feature-descriptor architecture + two-pass probe
+  platform/x86: msi-wmi-platform: rename quirk table to model
+  platform/x86: msi-wmi-platform: gate control by a runtime heuristic
+  platform/x86: msi-wmi-platform: fix issues found in review
+  platform/x86: msi-wmi-platform: add a disable_control module parameter
+  platform/x86: msi-wmi-platform: fix debugfs writes executing stale data
+  platform/x86: msi-wmi-platform: add status/USB/keyboard LEDs
+  platform/x86: msi-wmi-platform: add webcam power control
+  platform/x86: msi-wmi-platform: lock down debugfs EC access
+
+ drivers/platform/x86/msi-wmi-platform.c | 808 ++++++++++++++++++++++++++++----
+ 1 file changed, 740 insertions(+), 68 deletions(-)
+
+base-commit: 62b1dcf2e7af3dc2879d1a39bf6823c99486a8c2
+--
+2.51.0

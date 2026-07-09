@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Sun, 5 Jul 2026 11:57:05 +0200
-Subject: [PATCH 09/10] platform/x86: msi-wmi-platform: add a disable_control
+Subject: [PATCH 09/13] platform/x86: msi-wmi-platform: add a disable_control
  module parameter
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

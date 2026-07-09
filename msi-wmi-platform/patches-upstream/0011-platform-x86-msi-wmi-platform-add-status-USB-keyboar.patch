@@ -1,0 +1,189 @@
+From 86769f46dff958bdf2709876dcfc6a7e3889c6ef Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Wed, 8 Jul 2026 09:48:11 +0200
+Subject: [PATCH 11/13] platform/x86: msi-wmi-platform: add status/USB/keyboard
+ LEDs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Expose the mic-mute, mute, USB-backlight and keyboard-backlight-enable
+indicators as LED class devices, driven through the bounded
+Get_Data/Set_Data EC ABI (buffer[0]=address, buffer[1]=value) -- the same
+interface the charge threshold already uses, so no arbitrary EC access is
+added. Each LED maps to one EC-register bit, except the USB backlight
+which is a 0..255 byte.
+
+Gated by the existing control heuristic; a per-model LED presence list is
+left as a follow-up so a mic/mute LED is not exposed on SKUs lacking the
+indicator.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 121 ++++++++++++++++++++++++
+ 1 file changed, 121 insertions(+)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index d477ded..53a0316 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -21,6 +21,7 @@
+ #include <linux/platform_profile.h>
+ #include <linux/hwmon.h>
+ #include <linux/hwmon-sysfs.h>
++#include <linux/leds.h>
+ #include <linux/kernel.h>
+ #include <linux/kstrtox.h>
+ #include <linux/minmax.h>
+@@ -159,6 +160,7 @@ enum msi_feature_id {
+ 	MSI_FEAT_PROFILE,	/* platform_profile (shift mode) */
+ 	MSI_FEAT_CHARGE,	/* charge_control_end_threshold */
+ 	MSI_FEAT_FAN_CURVES,	/* pwm_enable + auto_point curve tables + restore */
++	MSI_FEAT_LEDS,		/* status/USB/keyboard LED class devices */
+ 	MSI_FEAT_COUNT
+ };
+ 
+@@ -452,6 +454,39 @@ static int msi_wmi_platform_query(struct msi_wmi_platform_data *data,
+ 	}
+ }
+ 
++/*
++ * Single-byte EC access via the address-parameterized Get_Data/Set_Data ABI
++ * (buffer[0] = EC address, buffer[1] = value) -- the same bounded interface
++ * MSI Center uses and the charge-threshold feature already relies on. Bounded
++ * to one named register, so unlike the raw debugfs Get_EC/Set_EC it is not an
++ * arbitrary-EC-access primitive and stays lockdown-friendly.
++ */
++static int msi_wmi_platform_ec_set(struct msi_wmi_platform_data *data, u8 addr, u8 val)
++{
++	u8 buffer[32] = { addr, val };
++
++	return msi_wmi_platform_query(data, MSI_PLATFORM_SET_DATA, buffer, sizeof(buffer));
++}
++
++/* Atomic read-modify-write of a single EC-register bit (holds wmi_lock across both). */
++static int msi_wmi_platform_ec_update_bit(struct msi_wmi_platform_data *data,
++					  u8 addr, u8 bit, bool on)
++{
++	u8 rd[32] = { addr };
++	u8 wr[32] = { 0 };
++	int ret;
++
++	guard(mutex)(&data->wmi_lock);
++
++	ret = msi_wmi_platform_query_unlocked(data, MSI_PLATFORM_GET_DATA, rd, sizeof(rd));
++	if (ret)
++		return ret;
++
++	wr[0] = addr;
++	wr[1] = on ? (rd[1] | BIT(bit)) : (rd[1] & ~BIT(bit));
++	return msi_wmi_platform_query_unlocked(data, MSI_PLATFORM_SET_DATA, wr, sizeof(wr));
++}
++
+ static ssize_t msi_wmi_platform_fan_table_show(struct device *dev, struct device_attribute *attr,
+ 					       char *buf)
+ {
+@@ -1761,6 +1796,87 @@ static int msi_feat_fan_curves_resume(struct msi_wmi_platform_data *data)
+ 	return 0;
+ }
+ 
++/*
++ * Status / USB / keyboard LEDs. Each maps to one EC register bit (or, for the
++ * USB backlight, a whole 0..255 brightness byte). Driven through the bounded
++ * Get_Data/Set_Data ABI. NOTE: the exact bit assignments below are validated on
++ * MS-16V5; a couple disagree across our sources (mic/mute) and must be
++ * re-confirmed on hardware per model. There is no per-LED Get_Device presence
++ * bit, so the feature is gated by the same control heuristic as the others --
++ * a per-model LED presence list is the intended follow-up so we never expose a
++ * mic/mute LED on a SKU that lacks the physical indicator.
++ */
++#define MSI_LED_BYTE	0xff	/* sentinel: whole-byte brightness, not a single bit */
++
++static const struct msi_led_desc {
++	const char *name;
++	const char *default_trigger;
++	u8 addr;
++	u8 bit;
++	u8 max;
++} msi_led_descs[] = {
++	{ "platform::micmute",	"audio-micmute", 0x2c, 0,            1 },
++	{ "platform::mute",	NULL,		 0x2d, 0,            1 },
++	{ "msi::kbd_backlight",	NULL,		 0xec, 1,            1 },
++	{ "msi::usb_backlight",	NULL,		 0xdb, MSI_LED_BYTE, 255 },
++};
++
++struct msi_led {
++	struct led_classdev cdev;
++	struct msi_wmi_platform_data *data;
++	u8 addr;
++	u8 bit;
++};
++
++static int msi_led_brightness_set(struct led_classdev *cdev,
++				  enum led_brightness brightness)
++{
++	struct msi_led *led = container_of(cdev, struct msi_led, cdev);
++
++	if (led->bit == MSI_LED_BYTE)
++		return msi_wmi_platform_ec_set(led->data, led->addr, brightness);
++
++	return msi_wmi_platform_ec_update_bit(led->data, led->addr, led->bit,
++					      brightness != LED_OFF);
++}
++
++static int msi_feat_leds_detect(struct msi_wmi_platform_data *data)
++{
++	return msi_control_supported(data) ? 1 : 0;
++}
++
++static int msi_feat_leds_setup(struct msi_wmi_platform_data *data)
++{
++	struct device *dev = &data->wdev->dev;
++	size_t i;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(msi_led_descs); i++) {
++		const struct msi_led_desc *d = &msi_led_descs[i];
++		struct msi_led *led;
++
++		led = devm_kzalloc(dev, sizeof(*led), GFP_KERNEL);
++		if (!led)
++			return -ENOMEM;
++
++		led->data = data;
++		led->addr = d->addr;
++		led->bit = d->bit;
++		led->cdev.name = d->name;
++		led->cdev.default_trigger = d->default_trigger;
++		led->cdev.max_brightness = d->max;
++		led->cdev.brightness_set_blocking = msi_led_brightness_set;
++		led->cdev.flags = LED_CORE_SUSPENDRESUME;
++
++		ret = devm_led_classdev_register(dev, &led->cdev);
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to register LED %s\n",
++					     d->name);
++	}
++
++	return 0;
++}
++
+ struct msi_wmi_platform_feature {
+ 	const char *name;
+ 	bool required;						/* setup failure is fatal to probe */
+@@ -1798,6 +1914,11 @@ static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
+ 		.suspend = msi_feat_fan_curves_suspend,
+ 		.resume = msi_feat_fan_curves_resume,
+ 	},
++	[MSI_FEAT_LEDS] = {
++		.name = "leds",
++		.detect = msi_feat_leds_detect,
++		.setup = msi_feat_leds_setup,
++	},
+ };
+ 
+ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+-- 
+2.53.0
+

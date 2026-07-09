@@ -21,6 +21,7 @@
 #include <linux/platform_profile.h>
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
+#include <linux/leds.h>
 #include <linux/kernel.h>
 #include <linux/kstrtox.h>
 #include <linux/minmax.h>
@@ -28,6 +29,7 @@
 #include <linux/mutex.h>
 #include <linux/printk.h>
 #include <linux/rwsem.h>
+#include <linux/security.h>
 #include <linux/string.h>
 #include <linux/suspend.h>
 #include <linux/sysfs.h>
@@ -83,6 +85,13 @@
 #define MSI_PLATFORM_PL1_ADDR	0x50
 #define MSI_PLATFORM_PL2_ADDR	0x51
 #define MSI_PLATFORM_BAT_ADDR	0xd7
+
+/* Webcam power: EC 0x2E bit1 (PXCT). Set = camera on (USB device enumerates),
+ * clear = off (device de-enumerates from USB). A real hardware kill, gated by
+ * the SupportedWebCam presence bit.
+ */
+#define MSI_PLATFORM_CAMERA_ADDR	0x2e
+#define MSI_PLATFORM_CAMERA_BIT		1
 
 /* Get_Data() EC firmware ID string (4-char prefix, e.g. "16V5") */
 #define MSI_PLATFORM_ECID_ADDR	0xa0
@@ -159,6 +168,8 @@ enum msi_feature_id {
 	MSI_FEAT_PROFILE,	/* platform_profile (shift mode) */
 	MSI_FEAT_CHARGE,	/* charge_control_end_threshold */
 	MSI_FEAT_FAN_CURVES,	/* pwm_enable + auto_point curve tables + restore */
+	MSI_FEAT_LEDS,		/* status/USB/keyboard LED class devices */
+	MSI_FEAT_CAMERA,	/* webcam power (camera_power), gated by SupportedWebCam */
 	MSI_FEAT_COUNT
 };
 
@@ -171,6 +182,7 @@ struct msi_wmi_platform_caps {
 	bool wmi_valid;
 	u8 wmi_major;
 	bool is_tigerlake;
+	bool webcam;		/* Get_Device(0x01) Data[1].1 == SupportedWebCam */
 };
 
 struct msi_wmi_platform_data {
@@ -450,6 +462,52 @@ static int msi_wmi_platform_query(struct msi_wmi_platform_data *data,
 	scoped_guard(mutex, &data->wmi_lock) {
 		return msi_wmi_platform_query_unlocked(data, method, buffer, length);
 	}
+}
+
+/*
+ * Single-byte EC access via the address-parameterized Get_Data/Set_Data ABI
+ * (buffer[0] = EC address, buffer[1] = value) -- the same bounded interface
+ * MSI Center uses and the charge-threshold feature already relies on. Bounded
+ * to one named register, so unlike the raw debugfs Get_EC/Set_EC it is not an
+ * arbitrary-EC-access primitive and stays lockdown-friendly.
+ */
+static int msi_wmi_platform_ec_get(struct msi_wmi_platform_data *data, u8 addr, u8 *val)
+{
+	u8 buffer[32] = { addr };
+	int ret;
+
+	ret = msi_wmi_platform_query(data, MSI_PLATFORM_GET_DATA, buffer, sizeof(buffer));
+	if (ret)
+		return ret;
+
+	*val = buffer[1];
+	return 0;
+}
+
+static int msi_wmi_platform_ec_set(struct msi_wmi_platform_data *data, u8 addr, u8 val)
+{
+	u8 buffer[32] = { addr, val };
+
+	return msi_wmi_platform_query(data, MSI_PLATFORM_SET_DATA, buffer, sizeof(buffer));
+}
+
+/* Atomic read-modify-write of a single EC-register bit (holds wmi_lock across both). */
+static int msi_wmi_platform_ec_update_bit(struct msi_wmi_platform_data *data,
+					  u8 addr, u8 bit, bool on)
+{
+	u8 rd[32] = { addr };
+	u8 wr[32] = { 0 };
+	int ret;
+
+	guard(mutex)(&data->wmi_lock);
+
+	ret = msi_wmi_platform_query_unlocked(data, MSI_PLATFORM_GET_DATA, rd, sizeof(rd));
+	if (ret)
+		return ret;
+
+	wr[0] = addr;
+	wr[1] = on ? (rd[1] | BIT(bit)) : (rd[1] & ~BIT(bit));
+	return msi_wmi_platform_query_unlocked(data, MSI_PLATFORM_SET_DATA, wr, sizeof(wr));
 }
 
 static ssize_t msi_wmi_platform_fan_table_show(struct device *dev, struct device_attribute *attr,
@@ -1389,6 +1447,17 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user
 	u8 payload[32] = { };
 	ssize_t ret;
 
+	/*
+	 * Writing a command here invokes the selected WMI method, including
+	 * Set_EC() and friends -- arbitrary EC / hardware-register writes,
+	 * functionally equivalent to /dev/mem access. Refuse the debug interface
+	 * under kernel lockdown (e.g. Secure Boot) so it cannot be used to bypass
+	 * integrity protections.
+	 */
+	ret = security_locked_down(LOCKDOWN_DEV_MEM);
+	if (ret)
+		return ret;
+
 	/* Do not allow partial writes */
 	if (*offset != 0)
 		return -EINVAL;
@@ -1626,6 +1695,9 @@ static void msi_wmi_platform_presence_log(struct msi_wmi_platform_data *data)
 	if (ret < 0 || buffer[0] != 1)
 		return;
 
+	/* MSI numbers Data[k] == buffer[k+1]; SupportedWebCam = Data[1].1 = buffer[2].1 */
+	data->caps.webcam = buffer[2] & BIT(1);
+
 	dev_info(&data->wdev->dev,
 		 "Get_Device(0x01) presence bitmap: %02x %02x %02x %02x\n",
 		 buffer[1], buffer[2], buffer[3], buffer[4]);
@@ -1761,6 +1833,144 @@ static int msi_feat_fan_curves_resume(struct msi_wmi_platform_data *data)
 	return 0;
 }
 
+/*
+ * Status / USB / keyboard LEDs. Each maps to one EC register bit (or, for the
+ * USB backlight, a whole 0..255 brightness byte). Driven through the bounded
+ * Get_Data/Set_Data ABI. NOTE: the exact bit assignments below are validated on
+ * MS-16V5; a couple disagree across our sources (mic/mute) and must be
+ * re-confirmed on hardware per model. There is no per-LED Get_Device presence
+ * bit, so the feature is gated by the same control heuristic as the others --
+ * a per-model LED presence list is the intended follow-up so we never expose a
+ * mic/mute LED on a SKU that lacks the physical indicator.
+ */
+#define MSI_LED_BYTE	0xff	/* sentinel: whole-byte brightness, not a single bit */
+
+static const struct msi_led_desc {
+	const char *name;
+	const char *default_trigger;
+	u8 addr;
+	u8 bit;
+	u8 max;
+} msi_led_descs[] = {
+	{ "platform::micmute",	"audio-micmute", 0x2c, 0,            1 },
+	{ "platform::mute",	NULL,		 0x2d, 0,            1 },
+	{ "msi::kbd_backlight",	NULL,		 0xec, 1,            1 },
+	{ "msi::usb_backlight",	NULL,		 0xdb, MSI_LED_BYTE, 255 },
+};
+
+struct msi_led {
+	struct led_classdev cdev;
+	struct msi_wmi_platform_data *data;
+	u8 addr;
+	u8 bit;
+};
+
+static int msi_led_brightness_set(struct led_classdev *cdev,
+				  enum led_brightness brightness)
+{
+	struct msi_led *led = container_of(cdev, struct msi_led, cdev);
+
+	if (led->bit == MSI_LED_BYTE)
+		return msi_wmi_platform_ec_set(led->data, led->addr, brightness);
+
+	return msi_wmi_platform_ec_update_bit(led->data, led->addr, led->bit,
+					      brightness != LED_OFF);
+}
+
+static int msi_feat_leds_detect(struct msi_wmi_platform_data *data)
+{
+	return msi_control_supported(data) ? 1 : 0;
+}
+
+static int msi_feat_leds_setup(struct msi_wmi_platform_data *data)
+{
+	struct device *dev = &data->wdev->dev;
+	size_t i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(msi_led_descs); i++) {
+		const struct msi_led_desc *d = &msi_led_descs[i];
+		struct msi_led *led;
+
+		led = devm_kzalloc(dev, sizeof(*led), GFP_KERNEL);
+		if (!led)
+			return -ENOMEM;
+
+		led->data = data;
+		led->addr = d->addr;
+		led->bit = d->bit;
+		led->cdev.name = d->name;
+		led->cdev.default_trigger = d->default_trigger;
+		led->cdev.max_brightness = d->max;
+		led->cdev.brightness_set_blocking = msi_led_brightness_set;
+		led->cdev.flags = LED_CORE_SUSPENDRESUME;
+
+		ret = devm_led_classdev_register(dev, &led->cdev);
+		if (ret)
+			return dev_err_probe(dev, ret, "failed to register LED %s\n",
+					     d->name);
+	}
+
+	return 0;
+}
+
+/*
+ * Webcam power control. Writing 0/1 cuts/restores power to the integrated
+ * camera at the USB level (the device de-enumerates), not a software privacy
+ * flag -- so it is a writable control (like ideapad-laptop's camera_power),
+ * not an SW_CAMERA_LENS_COVER switch (there is no physical cover). Gated by the
+ * SupportedWebCam presence bit so it only appears on SKUs that implement it.
+ */
+static ssize_t camera_power_show(struct device *dev, struct device_attribute *attr,
+				 char *buf)
+{
+	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+	u8 val;
+	int ret;
+
+	ret = msi_wmi_platform_ec_get(data, MSI_PLATFORM_CAMERA_ADDR, &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", !!(val & BIT(MSI_PLATFORM_CAMERA_BIT)));
+}
+
+static ssize_t camera_power_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
+	bool on;
+	int ret;
+
+	ret = kstrtobool(buf, &on);
+	if (ret)
+		return ret;
+
+	ret = msi_wmi_platform_ec_update_bit(data, MSI_PLATFORM_CAMERA_ADDR,
+					     MSI_PLATFORM_CAMERA_BIT, on);
+	return ret < 0 ? ret : count;
+}
+static DEVICE_ATTR_RW(camera_power);
+
+static struct attribute *msi_camera_attrs[] = {
+	&dev_attr_camera_power.attr,
+	NULL
+};
+
+static const struct attribute_group msi_camera_group = {
+	.attrs = msi_camera_attrs,
+};
+
+static int msi_feat_camera_detect(struct msi_wmi_platform_data *data)
+{
+	return data->caps.webcam ? 1 : 0;
+}
+
+static int msi_feat_camera_setup(struct msi_wmi_platform_data *data)
+{
+	return devm_device_add_group(&data->wdev->dev, &msi_camera_group);
+}
+
 struct msi_wmi_platform_feature {
 	const char *name;
 	bool required;						/* setup failure is fatal to probe */
@@ -1797,6 +2007,16 @@ static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
 		.remove = msi_feat_fan_curves_remove,
 		.suspend = msi_feat_fan_curves_suspend,
 		.resume = msi_feat_fan_curves_resume,
+	},
+	[MSI_FEAT_LEDS] = {
+		.name = "leds",
+		.detect = msi_feat_leds_detect,
+		.setup = msi_feat_leds_setup,
+	},
+	[MSI_FEAT_CAMERA] = {
+		.name = "camera",
+		.detect = msi_feat_camera_detect,
+		.setup = msi_feat_camera_setup,
 	},
 };
 

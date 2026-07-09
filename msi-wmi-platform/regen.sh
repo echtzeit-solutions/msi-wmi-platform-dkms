@@ -25,6 +25,8 @@ cp base.c "$tmp"
 n=0
 for p in patches-upstream/0[0-9][0-9][0-9]-*.patch; do
 	[ -e "$p" ] || continue
+	# the cover letter is part of the LKML submission, not a code patch
+	case "$p" in */0000-*) continue ;; esac
 	# patch(1) is pointed at the single target file, ignoring per-file paths:
 	# refuse multi-file patches, which it would silently misapply
 	if [ "$(grep -c '^diff --git ' "$p")" -ne 1 ]; then

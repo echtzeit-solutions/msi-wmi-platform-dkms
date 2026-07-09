@@ -1,0 +1,53 @@
+From 75bf834b7d893d3a716e00577c3db8146c44616b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Wed, 8 Jul 2026 09:48:11 +0200
+Subject: [PATCH 13/13] platform/x86: msi-wmi-platform: lock down debugfs EC
+ access
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The debugfs interface can invoke Set_EC() and the other Set_* WMI methods,
+which write arbitrary EC / hardware registers -- functionally equivalent
+to /dev/mem access. Refuse it under kernel lockdown (LOCKDOWN_DEV_MEM) so
+it cannot be used to bypass integrity protections under Secure Boot.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index e1d3a3a..fc71acd 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -29,6 +29,7 @@
+ #include <linux/mutex.h>
+ #include <linux/printk.h>
+ #include <linux/rwsem.h>
++#include <linux/security.h>
+ #include <linux/string.h>
+ #include <linux/suspend.h>
+ #include <linux/sysfs.h>
+@@ -1446,6 +1447,17 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user
+ 	u8 payload[32] = { };
+ 	ssize_t ret;
+ 
++	/*
++	 * Writing a command here invokes the selected WMI method, including
++	 * Set_EC() and friends -- arbitrary EC / hardware-register writes,
++	 * functionally equivalent to /dev/mem access. Refuse the debug interface
++	 * under kernel lockdown (e.g. Secure Boot) so it cannot be used to bypass
++	 * integrity protections.
++	 */
++	ret = security_locked_down(LOCKDOWN_DEV_MEM);
++	if (ret)
++		return ret;
++
+ 	/* Do not allow partial writes */
+ 	if (*offset != 0)
+ 		return -EINVAL;
+-- 
+2.53.0
+

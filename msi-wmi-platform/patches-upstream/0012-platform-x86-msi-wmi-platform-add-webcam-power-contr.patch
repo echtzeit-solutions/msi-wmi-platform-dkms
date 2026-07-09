@@ -1,0 +1,167 @@
+From 9329bd146837366f796adb4f29514c5894dac347 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
+Date: Wed, 8 Jul 2026 09:48:11 +0200
+Subject: [PATCH 12/13] platform/x86: msi-wmi-platform: add webcam power
+ control
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a camera_power sysfs attribute toggling the integrated webcam. The
+control cuts power at the USB level -- the camera de-enumerates from the
+bus rather than blanking the image -- so it is a writable control (like
+ideapad-laptop's camera_power), not an SW_CAMERA_LENS_COVER switch; there
+is no physical cover.
+
+Gated by the Get_Device(0x01) SupportedWebCam presence bit so it only
+appears on hardware that implements it.
+
+Signed-off-by: Florian Hänel <florian.haenel@echtzeit.solutions>
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/platform/x86/msi-wmi-platform.c | 87 +++++++++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+
+diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
+index 53a0316..e1d3a3a 100644
+--- a/drivers/platform/x86/msi-wmi-platform.c
++++ b/drivers/platform/x86/msi-wmi-platform.c
+@@ -85,6 +85,13 @@
+ #define MSI_PLATFORM_PL2_ADDR	0x51
+ #define MSI_PLATFORM_BAT_ADDR	0xd7
+ 
++/* Webcam power: EC 0x2E bit1 (PXCT). Set = camera on (USB device enumerates),
++ * clear = off (device de-enumerates from USB). A real hardware kill, gated by
++ * the SupportedWebCam presence bit.
++ */
++#define MSI_PLATFORM_CAMERA_ADDR	0x2e
++#define MSI_PLATFORM_CAMERA_BIT		1
++
+ /* Get_Data() EC firmware ID string (4-char prefix, e.g. "16V5") */
+ #define MSI_PLATFORM_ECID_ADDR	0xa0
+ #define MSI_PLATFORM_ECID_LEN	4
+@@ -161,6 +168,7 @@ enum msi_feature_id {
+ 	MSI_FEAT_CHARGE,	/* charge_control_end_threshold */
+ 	MSI_FEAT_FAN_CURVES,	/* pwm_enable + auto_point curve tables + restore */
+ 	MSI_FEAT_LEDS,		/* status/USB/keyboard LED class devices */
++	MSI_FEAT_CAMERA,	/* webcam power (camera_power), gated by SupportedWebCam */
+ 	MSI_FEAT_COUNT
+ };
+ 
+@@ -173,6 +181,7 @@ struct msi_wmi_platform_caps {
+ 	bool wmi_valid;
+ 	u8 wmi_major;
+ 	bool is_tigerlake;
++	bool webcam;		/* Get_Device(0x01) Data[1].1 == SupportedWebCam */
+ };
+ 
+ struct msi_wmi_platform_data {
+@@ -461,6 +470,19 @@ static int msi_wmi_platform_query(struct msi_wmi_platform_data *data,
+  * to one named register, so unlike the raw debugfs Get_EC/Set_EC it is not an
+  * arbitrary-EC-access primitive and stays lockdown-friendly.
+  */
++static int msi_wmi_platform_ec_get(struct msi_wmi_platform_data *data, u8 addr, u8 *val)
++{
++	u8 buffer[32] = { addr };
++	int ret;
++
++	ret = msi_wmi_platform_query(data, MSI_PLATFORM_GET_DATA, buffer, sizeof(buffer));
++	if (ret)
++		return ret;
++
++	*val = buffer[1];
++	return 0;
++}
++
+ static int msi_wmi_platform_ec_set(struct msi_wmi_platform_data *data, u8 addr, u8 val)
+ {
+ 	u8 buffer[32] = { addr, val };
+@@ -1661,6 +1683,9 @@ static void msi_wmi_platform_presence_log(struct msi_wmi_platform_data *data)
+ 	if (ret < 0 || buffer[0] != 1)
+ 		return;
+ 
++	/* MSI numbers Data[k] == buffer[k+1]; SupportedWebCam = Data[1].1 = buffer[2].1 */
++	data->caps.webcam = buffer[2] & BIT(1);
++
+ 	dev_info(&data->wdev->dev,
+ 		 "Get_Device(0x01) presence bitmap: %02x %02x %02x %02x\n",
+ 		 buffer[1], buffer[2], buffer[3], buffer[4]);
+@@ -1877,6 +1902,63 @@ static int msi_feat_leds_setup(struct msi_wmi_platform_data *data)
+ 	return 0;
+ }
+ 
++/*
++ * Webcam power control. Writing 0/1 cuts/restores power to the integrated
++ * camera at the USB level (the device de-enumerates), not a software privacy
++ * flag -- so it is a writable control (like ideapad-laptop's camera_power),
++ * not an SW_CAMERA_LENS_COVER switch (there is no physical cover). Gated by the
++ * SupportedWebCam presence bit so it only appears on SKUs that implement it.
++ */
++static ssize_t camera_power_show(struct device *dev, struct device_attribute *attr,
++				 char *buf)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++	u8 val;
++	int ret;
++
++	ret = msi_wmi_platform_ec_get(data, MSI_PLATFORM_CAMERA_ADDR, &val);
++	if (ret)
++		return ret;
++
++	return sysfs_emit(buf, "%u\n", !!(val & BIT(MSI_PLATFORM_CAMERA_BIT)));
++}
++
++static ssize_t camera_power_store(struct device *dev, struct device_attribute *attr,
++				  const char *buf, size_t count)
++{
++	struct msi_wmi_platform_data *data = dev_get_drvdata(dev);
++	bool on;
++	int ret;
++
++	ret = kstrtobool(buf, &on);
++	if (ret)
++		return ret;
++
++	ret = msi_wmi_platform_ec_update_bit(data, MSI_PLATFORM_CAMERA_ADDR,
++					     MSI_PLATFORM_CAMERA_BIT, on);
++	return ret < 0 ? ret : count;
++}
++static DEVICE_ATTR_RW(camera_power);
++
++static struct attribute *msi_camera_attrs[] = {
++	&dev_attr_camera_power.attr,
++	NULL
++};
++
++static const struct attribute_group msi_camera_group = {
++	.attrs = msi_camera_attrs,
++};
++
++static int msi_feat_camera_detect(struct msi_wmi_platform_data *data)
++{
++	return data->caps.webcam ? 1 : 0;
++}
++
++static int msi_feat_camera_setup(struct msi_wmi_platform_data *data)
++{
++	return devm_device_add_group(&data->wdev->dev, &msi_camera_group);
++}
++
+ struct msi_wmi_platform_feature {
+ 	const char *name;
+ 	bool required;						/* setup failure is fatal to probe */
+@@ -1919,6 +2001,11 @@ static const struct msi_wmi_platform_feature msi_features[MSI_FEAT_COUNT] = {
+ 		.detect = msi_feat_leds_detect,
+ 		.setup = msi_feat_leds_setup,
+ 	},
++	[MSI_FEAT_CAMERA] = {
++		.name = "camera",
++		.detect = msi_feat_camera_detect,
++		.setup = msi_feat_camera_setup,
++	},
+ };
+ 
+ static int msi_wmi_platform_probe(struct wmi_device *wdev, const void *context)
+-- 
+2.53.0
+
