@@ -1,0 +1,6 @@
+# MSI GS66 SteelSeries KLC per-key RGB keyboard (USB 1038:113a).
+# Grants the active local session user read/write access to the LED hidraw
+# node so OpenRGB (with the MSI-KLC plugin) can drive it without root.
+# Install: sudo cp 60-openrgb-msi-klc.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="113a", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="113a", MODE="0660", TAG+="uaccess"

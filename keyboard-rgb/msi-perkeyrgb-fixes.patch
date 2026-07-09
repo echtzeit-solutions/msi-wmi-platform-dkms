@@ -1,0 +1,50 @@
+diff --git a/README.md b/README.md
+index 8f3e496..8e190a9 100644
+--- a/README.md
++++ b/README.md
+@@ -43,12 +43,19 @@ This tool should probably work on any recent MSI laptop with a per-key RGB keybo
+ | GL63  | Yes
+ | GS63  | Yes
+ | GS65  | Yes
++| GS66  | Yes
+ | GS75  | Yes
++| GS76  | Yes
+ | GT63  | Yes
+ | GT75  | Yes
+ 
+ If you have some additional test results, feel free to open a GitHub issue to help expand this list !
+ 
++**Newer (12th-gen and later) units** enumerate with USB id `1038:113a` instead of the default
++`1038:1122`. If `lsusb` shows `1038:113a`, pass `--id 1038:113a` (e.g. the GS66 Stealth 12UHS / MS-16V5).
++The `GS65`/`GS66` keymap covers these 15" no-numpad Stealth layouts, so `Home`/`End` are addressable
++with `--model GS65` (or `GS66`).
++
+ Requirements
+ ----------
+ 
+diff --git a/msi_perkeyrgb/protocol_data/keycodes.py b/msi_perkeyrgb/protocol_data/keycodes.py
+index ce20f61..e2ff9c2 100644
+--- a/msi_perkeyrgb/protocol_data/keycodes.py
++++ b/msi_perkeyrgb/protocol_data/keycodes.py
+@@ -162,7 +162,7 @@ REGION_KEYCODES = {
+             97,
+             98,
+             99,
+-            0,
++            102,
+             0,
+             0,
+             0,
+diff --git a/msi_perkeyrgb/protocol_data/msi_keymaps.py b/msi_perkeyrgb/protocol_data/msi_keymaps.py
+index 705f346..48647a5 100644
+--- a/msi_perkeyrgb/protocol_data/msi_keymaps.py
++++ b/msi_perkeyrgb/protocol_data/msi_keymaps.py
+@@ -104,7 +104,7 @@ AVAILABLE_MSI_KEYMAPS = [
+       133: 227,
+       'fn': 240}),
+ 
+-    (['GS65'],
++    (['GS65', 'GS66', 'GS76'],
+       {9: 41,
+        10: 30,
+        11: 31,
