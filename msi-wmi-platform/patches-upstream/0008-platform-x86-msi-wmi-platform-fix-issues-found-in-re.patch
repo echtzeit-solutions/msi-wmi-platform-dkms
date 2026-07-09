@@ -60,7 +60,7 @@ Assisted-by: Claude:claude-fable-5
  1 file changed, 94 insertions(+), 52 deletions(-)
 
 diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
-index 0e2e05e..54c53d5 100644
+index 0e2e05ec2885..54c53d5476d9 100644
 --- a/drivers/platform/x86/msi-wmi-platform.c
 +++ b/drivers/platform/x86/msi-wmi-platform.c
 @@ -129,8 +129,8 @@ enum msi_wmi_platform_method {

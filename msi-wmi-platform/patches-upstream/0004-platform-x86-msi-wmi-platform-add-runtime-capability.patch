@@ -147,3 +147,6 @@ index 63b5b29400b3..6fa31907d4e8 100644
  	ret = msi_wmi_fw_attrs_init(data);
  	if (ret < 0)
  		return ret;
+-- 
+2.53.0
+

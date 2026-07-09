@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Fri, 3 Jul 2026 13:36:03 +0200
-Subject: [PATCH 01/13] platform/x86: msi-wmi-platform: add MS-16V5 (Stealth GS66
- 12Ux) quirk
+Subject: [PATCH 01/13] platform/x86: msi-wmi-platform: add MS-16V5 (Stealth
+ GS66 12Ux) quirk
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -221,3 +221,6 @@ index dfb65ac8fbf6..c79d4a60a7f8 100644
  	},
  	.id_table = msi_wmi_platform_id_table,
  	.probe = msi_wmi_platform_probe,
+-- 
+2.53.0
+

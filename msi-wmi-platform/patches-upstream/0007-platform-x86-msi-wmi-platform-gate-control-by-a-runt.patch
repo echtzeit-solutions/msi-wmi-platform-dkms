@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Fri, 3 Jul 2026 13:36:03 +0200
-Subject: [PATCH 07/13] platform/x86: msi-wmi-platform: gate control by a runtime
- heuristic
+Subject: [PATCH 07/13] platform/x86: msi-wmi-platform: gate control by a
+ runtime heuristic
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -197,3 +197,6 @@ index 479f659fc68e..0e2e05ec2885 100644
  }
  
  static int msi_feat_fan_curves_setup(struct msi_wmi_platform_data *data)
+-- 
+2.53.0
+

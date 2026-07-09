@@ -25,10 +25,10 @@ git am <the 10 v1 patches>                               # -> branch `antheas-v1
 #   (WMI GUID case, MSI-only autoload whitelist) == series patch 0000 below.
 ```
 
-We keep this as a real git stack (a mainline clone with `antheas-v1` → `ours`),
-so tracking a new version is just: re-`am` the new series, `git rebase --onto`
-ours on top, re-export `base.c` + the patches, `./regen.sh`, **re-test**. See
-"Update workflow".
+We keep this as a real git stack in the mainline clone at
+`~/src-laptop/linux` (`antheas-v1` → `ours`), so tracking a new version is
+just: re-`am` the new series, `git rebase --onto` ours on top, re-export
+`base.c` + the patches, `./regen.sh`, **re-test**. See "Update workflow".
 
 ## The series (`patches-upstream/00NN-*.patch`)
 `git format-patch` of our stack on top of `base.c`. checkpatch `--strict` clean
@@ -49,6 +49,9 @@ address. Always run pre-submission checkpatch from the up-to-date rebase clone.
 | 0008 | fix issues found in review (2 passes) | fold into 0002/0004/0005/0007 before submission |
 | 0009 | add a `disable_control` module parameter | user veto (the deny list ships empty) |
 | 0010 | fix debugfs writes executing stale data | **bugfix in the base series** (offer on-thread like 0003) |
+| 0011 | add status/USB/keyboard LEDs | feature (EC bit/byte via bounded Get_Data/Set_Data) |
+| 0012 | add webcam power control (`camera_power`) | feature (gated by SupportedWebCam) |
+| 0013 | lock down debugfs EC access | security (refuse WMI writes under kernel lockdown) |
 
 The heart is **0007**: control (platform_profile, charge threshold, fan curves)
 has no runtime capability bit, so instead of a per-model allow-list we enable it
@@ -88,9 +91,9 @@ no control quirk). Evidence: `docs/msi-center-architecture.md`,
 b4 am -o /tmp <msgid-of-vN>            # or save the mbox by hand
 git checkout <new base-commit>; git checkout -b antheas-vN && git am /tmp/*.mbx
 git rebase --onto antheas-vN antheas-v1 ours   # replay our stack; resolve
-# re-export the single source (10 = current patch count; adjust on fold):
-git show ours~10:drivers/platform/x86/msi-wmi-platform.c > .../msi-wmi-platform/base.c
-git format-patch --zero-commit -o .../patches-upstream 'ours~10'..ours
+# re-export the single source (13 = current patch count; adjust on fold):
+git show ours~13:drivers/platform/x86/msi-wmi-platform.c > .../msi-wmi-platform/base.c
+git format-patch --zero-commit -o .../patches-upstream 'ours~13'..ours
 cd .../msi-wmi-platform && ./regen.sh && make verify
 # REBUILD DKMS from the regenerated .c and RE-TEST on the MS-16V5, then
 # re-assert Tested-by. (`pip install --user b4` for `b4 am`.)

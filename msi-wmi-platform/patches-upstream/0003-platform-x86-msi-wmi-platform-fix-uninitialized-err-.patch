@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Fri, 3 Jul 2026 13:36:03 +0200
-Subject: [PATCH 03/13] platform/x86: msi-wmi-platform: fix uninitialized err in
- profile_setup
+Subject: [PATCH 03/13] platform/x86: msi-wmi-platform: fix uninitialized err
+ in profile_setup
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -39,3 +39,6 @@ index 7695e147fcf3..63b5b29400b3 100644
  
  	return PTR_ERR_OR_ZERO(data->ppdev);
  }
+-- 
+2.53.0
+

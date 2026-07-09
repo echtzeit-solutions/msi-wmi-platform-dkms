@@ -26,7 +26,7 @@ Assisted-by: Claude:claude-fable-5
  1 file changed, 1 insertion(+), 4 deletions(-)
 
 diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
-index f2dc564..d477ded 100644
+index f2dc564de50e..d477dedfe11a 100644
 --- a/drivers/platform/x86/msi-wmi-platform.c
 +++ b/drivers/platform/x86/msi-wmi-platform.c
 @@ -1402,6 +1402,7 @@ static ssize_t msi_wmi_platform_debugfs_write(struct file *fp, const char __user

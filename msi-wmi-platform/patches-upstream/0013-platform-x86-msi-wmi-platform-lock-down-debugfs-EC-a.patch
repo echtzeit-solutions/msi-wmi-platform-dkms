@@ -1,4 +1,4 @@
-From 75bf834b7d893d3a716e00577c3db8146c44616b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Wed, 8 Jul 2026 09:48:11 +0200
 Subject: [PATCH 13/13] platform/x86: msi-wmi-platform: lock down debugfs EC
@@ -19,7 +19,7 @@ Assisted-by: Claude:claude-opus-4-8
  1 file changed, 12 insertions(+)
 
 diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
-index e1d3a3a..fc71acd 100644
+index e1d3a3a79fed..fc71acd35fc2 100644
 --- a/drivers/platform/x86/msi-wmi-platform.c
 +++ b/drivers/platform/x86/msi-wmi-platform.c
 @@ -29,6 +29,7 @@

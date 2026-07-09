@@ -1,4 +1,4 @@
-From 86769f46dff958bdf2709876dcfc6a7e3889c6ef Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Florian=20H=C3=A4nel?= <florian.haenel@echtzeit.solutions>
 Date: Wed, 8 Jul 2026 09:48:11 +0200
 Subject: [PATCH 11/13] platform/x86: msi-wmi-platform: add status/USB/keyboard
@@ -25,7 +25,7 @@ Assisted-by: Claude:claude-opus-4-8
  1 file changed, 121 insertions(+)
 
 diff --git a/drivers/platform/x86/msi-wmi-platform.c b/drivers/platform/x86/msi-wmi-platform.c
-index d477ded..53a0316 100644
+index d477dedfe11a..53a0316ed894 100644
 --- a/drivers/platform/x86/msi-wmi-platform.c
 +++ b/drivers/platform/x86/msi-wmi-platform.c
 @@ -21,6 +21,7 @@
