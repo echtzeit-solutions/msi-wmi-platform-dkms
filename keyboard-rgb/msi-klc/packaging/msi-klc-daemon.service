@@ -1,0 +1,23 @@
+[Unit]
+Description=msi-klc keyboard-backlight brightness / DE-OSD bridge (uleds)
+Documentation=https://github.com/echtzeit-solutions/msi-klc
+# The uleds module must be loaded before we can register /dev/uleds. Pair
+# this with /etc/modules-load.d/msi-klc.conf (see packaging/README.md).
+Requires=dev-uleds.device
+After=dev-uleds.device
+# CRITICAL: UPower only enumerates *::kbd_backlight LEDs at ITS OWN startup —
+# there is no hot-add. The uleds LED must therefore exist before UPower
+# starts, or the desktop keyboard-backlight OSD will never bind to it.
+Before=upower.service
+
+[Service]
+Type=simple
+# Adjust the path if you installed the binary elsewhere (e.g. /usr/bin).
+ExecStart=/usr/local/bin/msi-klc daemon
+# Needs root: opens /dev/hidraw* (per-key RGB) and /dev/uleds.
+User=root
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

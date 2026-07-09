@@ -1,0 +1,19 @@
+[package]
+name = "msi-klc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Control MSI SteelSeries KLC per-key RGB laptop keyboards (1038:113a and family) via Linux hidraw"
+license = "MIT"
+authors = ["Florian Hänel"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nix = { version = "0.29", features = ["ioctl", "poll", "fs", "signal"] }
+
+[[bin]]
+name = "msi-klc"
+path = "src/main.rs"
